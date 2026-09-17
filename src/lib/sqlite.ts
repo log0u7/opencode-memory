@@ -28,10 +28,6 @@ interface NodeSqliteDatabase {
   close(): void;
 }
 
-interface NodeSqliteModule {
-  DatabaseSync: new (path: string) => NodeSqliteDatabase;
-}
-
 function createPreparedConn(db: NodeSqliteDatabase): SqliteConn {
   return {
     all<T = unknown>(sql: string, params?: unknown[]): T[] {
