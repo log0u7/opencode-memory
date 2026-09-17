@@ -1,0 +1,55 @@
+{
+  "name": "@log0u7/opencode-memory",
+  "version": "0.0.0",
+  "description": "Working memory for OpenCode: shared SQLite store with hybrid search, shared across all sessions on a machine.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/log0u7/opencode-memory.git"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "oc-plugin": [
+    "server"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:check": "pnpm run build && pnpm pack --dry-run",
+    "check": "biome check .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify": "pnpm run check && pnpm run typecheck && pnpm run test",
+    "prepare": "lefthook install"
+  },
+  "packageManager": "pnpm@11.0.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.11",
+    "@opencode-ai/plugin": "1.18.11",
+    "@types/node": "^22.0.0",
+    "lefthook": "2.0.15",
+    "typescript": "7.0.2",
+    "vitest": "^4.0.17"
+  }
+}
