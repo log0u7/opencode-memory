@@ -11,8 +11,14 @@ describe("smoke: plugin module", () => {
 
   it("plugin factory resolves hooks without network or side effects", async () => {
     const hooks = await MemoryPlugin(fakeInput());
-    expect(typeof hooks).toBe("object");
-    expect(Object.keys(hooks)).toEqual([]);
+    expect(Object.keys(hooks).sort()).toEqual(["dispose", "tool"]);
+    expect(Object.keys(hooks.tool ?? {}).sort()).toEqual([
+      "memory_forget",
+      "memory_list",
+      "memory_save",
+      "memory_search",
+    ]);
+    await hooks.dispose?.();
   });
 });
 
