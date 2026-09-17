@@ -8,6 +8,15 @@ type PluginOptions = {
   dbPath?: string;
 };
 
+const SYSTEM_GUIDANCE = `You have persistent working memory shared with all OpenCode sessions on this machine.
+At the start of a non-trivial task, run memory_search for relevant decisions and facts about this project.
+When you make a durable decision or learn a lasting fact, call memory_save (kinds: decision, fact, preference, gotcha).
+Never store credentials, tokens, or API keys in memory; the store refuses them.`;
+
+const COMPACTION_CONTEXT =
+  "The session is being compacted. After compaction, call memory_save for every durable decision still relevant " +
+  "(kind=decision) and any newly learned facts (kind=fact), so other sessions keep this knowledge.";
+
 function defaultDbPath(): string {
   const dataHome = process.env.XDG_DATA_HOME ?? `${process.env.HOME ?? ""}/.local/share`;
   return `${dataHome}/opencode-memory/memory.db`;
@@ -127,6 +136,12 @@ export const MemoryPlugin: Plugin = async (_input, options?: PluginOptions) => {
 
   return {
     ...hooks,
+    "experimental.chat.system.transform": async (_input, output) => {
+      output.system.push(SYSTEM_GUIDANCE);
+    },
+    "experimental.session.compacting": async (_input, output) => {
+      output.context.push(COMPACTION_CONTEXT);
+    },
     dispose: async () => {
       db?.close();
       db = null;
