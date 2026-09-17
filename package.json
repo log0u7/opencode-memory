@@ -37,6 +37,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "verify": "pnpm run check && pnpm run typecheck && pnpm run test",
     "prepare": "lefthook install"
   },
@@ -48,6 +49,7 @@
     "@biomejs/biome": "2.3.11",
     "@opencode-ai/plugin": "1.18.11",
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.0.17",
     "lefthook": "2.0.15",
     "typescript": "7.0.2",
     "vitest": "^4.0.17"

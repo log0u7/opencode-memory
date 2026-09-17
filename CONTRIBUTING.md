@@ -2,30 +2,39 @@
 
 Thanks for contributing. This document covers the workflow, quality bar, and conventions.
 
-## Workflow (simple gitflow)
+## Workflow (trunk-based)
 
-- `main` : protected, releases only (tag `vX.Y.Z` triggers npm publish).
-- `dev` : integration branch, PR target for all work.
-- Branch from `dev`, name it `feat/...`, `fix/...`, or `docs/...` (max three words, hyphenated).
-- Merges are `--no-ff`. Releases: merge `dev` into `main`, date-stamp the changelog, tag.
-- Hotfixes branch from `main`, merge back into `main` AND `dev`.
+- `main` is the only branch: protected (PRs required, no force pushes), always deployable, tagged `vX.Y.Z` for releases.
+- Branch from `main`, name it `feat/...`, `fix/...`, or `docs/...` (max three words, hyphenated), open a PR back into `main`.
+- Keep branches short-lived: merge or drop within days, rebase onto `main` when needed.
+- Merge style: the maintainer merges with `--no-ff` (personal preference while the project is single-maintainer; revisit squash or fast-forward when outside contributors arrive).
+- Releases: date-stamp the changelog, bump `package.json`, commit `chore(release): X.Y.Z`, tag `vX.Y.Z` and push: the publish workflow publishes to npm via trusted publishing.
+- Hotfixes are just fixes: branch from `main`, PR, merge, tag a patch release.
+
+## Reviews
+
+- GitHub Copilot reviews every PR (`copilot-pull-request-reviewer`); treat its comments like any reviewer's: address or push back with rationale.
+- The maintainer is the final reviewer.
+
+## Tests are mandatory
+
+Every behavior change ships with tests, written test-first (red-green-refactor):
+
+1. Write the failing test that demands the change (red).
+2. Implement the minimal code that makes it pass (green).
+3. Refactor with tests green.
+
+CI enforces a coverage gate (90% lines/functions, 80% branches) via `pnpm verify`; a PR without tests or below the threshold fails. Unit tests use real filesystem (temp dirs) and real SQLite: no mocks. Mocks are allowed only at true network/tool boundaries (mDNS, external CLIs).
+
+```sh
+pnpm test:coverage   # full suite with coverage report
+pnpm verify          # biome + typecheck + tests (coverage gate)
+pnpm build:check     # tsc build + pack dry-run
+```
 
 ## Commits
 
 Conventional Commits: `type(scope): summary`. Valid types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`. Optional scopes: `store`, `tools`, `hooks`, `ci`.
-
-## Quality bar
-
-Every PR must pass, and you must have run locally:
-
-```sh
-pnpm verify       # biome check + typecheck + vitest
-pnpm build:check  # tsc build + pack dry-run
-```
-
-## TDD
-
-Changes follow red-green-refactor: write the failing test first, make it pass with the minimal code, refactor with tests green. Unit tests use real filesystem (temp dirs) and real SQLite: no mocks. Mocks are allowed only at true network/tool boundaries (mDNS, external CLIs).
 
 ## Conventions
 
@@ -34,12 +43,11 @@ Changes follow red-green-refactor: write the failing test first, make it pass wi
 - Secrets never appear in code, tests, fixtures, logs, or the memory store.
 - Every PR updates `CHANGELOG.md` under `[Unreleased]` (Keep a Changelog format).
 
-## Release process (maintainers)
+## Release process (maintainer)
 
-1. Confirm CI green on `dev` and changelog accurate.
-2. `git checkout main && git merge --no-ff dev`.
-3. Move `[Unreleased]` to a dated `## [X.Y.Z] - YYYY-MM-DD` section; bump `package.json` version; commit `chore(release): X.Y.Z`.
-4. `git tag vX.Y.Z && git push origin main --tags` : the publish workflow publishes to npm via trusted publishing.
+1. Confirm CI green on `main` and changelog accurate.
+2. Move `[Unreleased]` to a dated `## [X.Y.Z] - YYYY-MM-DD` section; bump `package.json` version; commit `chore(release): X.Y.Z`.
+3. `git tag vX.Y.Z && git push origin main --tags`: the publish workflow publishes to npm via trusted publishing.
 
 ## Security
 

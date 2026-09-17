@@ -125,3 +125,28 @@ describe("store.forget", () => {
     db.close();
   });
 });
+
+describe("store with corrupted rows", () => {
+  it("survives unparseable tags without crashing", () => {
+    const db = openMemoryDb(":memory:");
+    db.conn.run(
+      "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ["bad1", "/work/project", "fact", "corrupt", "body", "not-json", 1, 1, null],
+    );
+
+    const hits = list(db, { scope: "/work/project" });
+    expect(hits[0]?.tags).toEqual([]);
+    db.close();
+  });
+});
+
+describe("fts query escaping", () => {
+  it("handles extra whitespace and double quotes safely", () => {
+    const db = openMemoryDb(":memory:");
+    save(db, input({ title: "quote handling" }));
+
+    const hits = search(db, { query: '  "quote"   handling  ', scope: "/work/project" });
+    expect(hits).toHaveLength(1);
+    db.close();
+  });
+});

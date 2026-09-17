@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -88,5 +88,58 @@ describe("memory plugin tools", () => {
       ctx(),
     );
     expect(result).toContain("credential");
+  });
+});
+
+describe("memory plugin error paths", () => {
+  it("returns a readable error for invalid input instead of throwing", async () => {
+    const tools = await loadTools({ dbPath: join(dir, "m2.db") });
+    const result = await tools.memory_save?.execute(
+      { kind: "fact", title: "", body: "x", tags: [] },
+      ctx(),
+    );
+    expect(result).toContain("error:");
+    expect(result).toContain("title");
+  });
+
+  it("defaults the store path to XDG data home when no option is given", async () => {
+    process.env.XDG_DATA_HOME = dir;
+    try {
+      const hooks = await MemoryPlugin(fakeInput());
+      const tools = hooks.tool ?? {};
+      const saved = await tools.memory_save?.execute(
+        { kind: "fact", title: "xdg", body: "uses xdg data home", tags: [] },
+        ctx(),
+      );
+      expect(saved).toContain("saved");
+      expect(statSync(join(dir, "opencode-memory", "memory.db")).isFile()).toBe(true);
+      await hooks.dispose?.();
+    } finally {
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+});
+
+describe("memory plugin remaining branches", () => {
+  it("memory_forget without id or query explains usage", async () => {
+    const tools = await loadTools({ dbPath: join(dir, "m3.db") });
+    const result = await tools.memory_forget?.execute({}, ctx());
+    expect(result).toBe("provide id or query");
+  });
+
+  it("dispose is idempotent (second call with closed db)", async () => {
+    const hooks = await MemoryPlugin(fakeInput(), { dbPath: join(dir, "m4.db") });
+    await hooks.dispose?.();
+    await expect(hooks.dispose?.()).resolves.toBeUndefined();
+  });
+});
+
+describe("memory plugin empty results", () => {
+  it("search and list report empty stores readably", async () => {
+    const tools = await loadTools({ dbPath: join(dir, "m5.db") });
+    expect(await tools.memory_search?.execute({ query: "nothing" }, ctx())).toBe(
+      "no matching memory entries",
+    );
+    expect(await tools.memory_list?.execute({}, ctx())).toBe("no memory entries");
   });
 });
