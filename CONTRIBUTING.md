@@ -16,6 +16,19 @@ Thanks for contributing. This document covers the workflow, quality bar, and con
 - GitHub Copilot reviews every PR (`copilot-pull-request-reviewer`); treat its comments like any reviewer's: address or push back with rationale.
 - The maintainer is the final reviewer.
 
+## Dependency PRs (Dependabot)
+
+Dependabot prepares, humans decide. It opens grouped PRs weekly (7-day supply-chain cooldown): minors/patches, vitest coupled with `@vitest/*`, and GitHub Actions bumps. It rebases on `@dependabot rebase` and closes superseded PRs. It never merges.
+
+A dependency PR merges only when:
+
+- CI is green (quality matrix + coverage gate, gitleaks on push).
+- No breaking change to our usage. For majors: coupled deps arrive together (vitest with `@vitest/coverage-v8`), and upstream breaking changes are checked against our hooks and tools.
+- `@types/node` never exceeds the max Node version actually tested in CI (currently 24).
+- Security patches are always accepted.
+
+Merge flow: review the diff, then `gh pr review --approve` and `gh pr merge --merge`. The branch ruleset requires maintainer approval for bot-authored PRs. Workflow-file bumps can't merge through the gh token (`workflow` scope): either run `gh auth refresh -s workflow` once (interactive), or locally merge with `--no-ff` and push inside a brief ruleset window (disable ruleset, push, re-enable).
+
 ## Tests are mandatory
 
 Every behavior change ships with tests, written test-first (red-green-refactor):
