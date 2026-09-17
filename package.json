@@ -52,6 +52,6 @@
     "@vitest/coverage-v8": "^4.0.17",
     "lefthook": "2.1.12",
     "typescript": "7.0.2",
-    "vitest": "^4.0.17"
+    "vitest": "^5.0.0"
   }
 }
