@@ -9,6 +9,10 @@ updates:
         update-types:
           - minor
           - patch
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
     cooldown:
       default-days: 7
   - package-ecosystem: github-actions
