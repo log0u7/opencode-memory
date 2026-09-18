@@ -10,7 +10,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Trunk-based workflow: `main` is the only branch (PRs required, protected by rulesets); `dev` removed.
-- GitHub Copilot reviews pull requests.
 
 ### Added
 

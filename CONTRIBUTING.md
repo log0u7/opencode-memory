@@ -13,8 +13,7 @@ Thanks for contributing. This document covers the workflow, quality bar, and con
 
 ## Reviews
 
-- GitHub Copilot reviews every PR (`copilot-pull-request-reviewer`); treat its comments like any reviewer's: address or push back with rationale.
-- The maintainer is the final reviewer.
+- The maintainer reviews every PR. For dependency PRs, see the Dependabot section below.
 
 ## Dependency PRs (Dependabot)
 
