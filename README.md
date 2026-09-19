@@ -24,6 +24,8 @@ Then register the plugin in `opencode.json`:
 
 Restart OpenCode. That is it: the store lives at `~/.local/share/opencode-memory/memory.db` (honors `XDG_DATA_HOME`).
 
+Note (npm 12): the package ships no lifecycle install scripts and needs no `allowScripts` / allowlist on install.
+
 ## Usage
 
 Nothing to do manually: the model is instructed to search memory at task start and save durable facts as they emerge. You can drive it explicitly:
