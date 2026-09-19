@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-18
+
 ### Changed
 
 - Trunk-based workflow: `main` is the only branch (PRs required, protected by rulesets); `dev` removed.
