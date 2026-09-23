@@ -10,11 +10,7 @@ Every session gets four tools (`memory_save`, `memory_search`, `memory_list`, `m
 
 ## Install
 
-```sh
-npm install -g @log0u7/opencode-memory
-```
-
-Then register the plugin in `opencode.json`:
+Register the plugin in `opencode.json` (project or global `~/.config/opencode/opencode.json`):
 
 ```json
 {
@@ -23,6 +19,14 @@ Then register the plugin in `opencode.json`:
 ```
 
 Restart OpenCode. That is it: the store lives at `~/.local/share/opencode-memory/memory.db` (honors `XDG_DATA_HOME`).
+
+The package is installed automatically at startup into opencode's plugin cache (`~/.cache/opencode/packages/`); no global npm/pnpm/mise install is needed (opencode does not consult global installs for plugins). Pin a version if you want upgrades to be explicit:
+
+```json
+{
+  "plugin": ["@log0u7/opencode-memory@0.1.1"]
+}
+```
 
 Note (npm 12): the package ships no lifecycle install scripts and needs no `allowScripts` / allowlist on install.
 
