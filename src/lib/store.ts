@@ -20,7 +20,7 @@ export class SecretDetectedError extends Error {
   }
 }
 
-export function validateEntry(input: EntryInput): void {
+function validateEntry(input: EntryInput): void {
   if (input.title.length === 0 || input.title.length > TITLE_MAX) {
     throw new TypeError(`title must be 1..${TITLE_MAX} characters`);
   }
@@ -124,17 +124,7 @@ export function forget(db: MemoryDb, target: { id: string } | { query: string })
   return db.conn.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
 }
 
-type Row = {
-  id: string;
-  scope: string;
-  kind: string;
-  title: string;
-  body: string;
-  tags: string;
-  created_at: number;
-  updated_at: number;
-  expires_at: number | null;
-};
+type Row = Omit<Entry, "tags"> & { tags: string };
 
 function rowToEntry(row: Row): Entry {
   return {

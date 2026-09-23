@@ -17,7 +17,10 @@ const COMPACTION_CONTEXT =
   "The session is being compacted. After compaction, call memory_save for every durable decision still relevant " +
   "(kind=decision) and any newly learned facts (kind=fact), so other sessions keep this knowledge.";
 
-function defaultDbPath(): string {
+function defaultDbPath(options?: PluginOptions): string {
+  if (typeof options?.dbPath === "string" && options.dbPath.length > 0) {
+    return options.dbPath;
+  }
   const dataHome = process.env.XDG_DATA_HOME ?? `${process.env.HOME ?? ""}/.local/share`;
   return `${dataHome}/opencode-memory/memory.db`;
 }
@@ -27,7 +30,7 @@ export const MemoryPlugin: Plugin = async (_input, options?: PluginOptions) => {
 
   const getDb = (): MemoryDb => {
     if (!db) {
-      db = openMemoryDb(dbPath(options));
+      db = openMemoryDb(defaultDbPath(options));
     }
     return db;
   };
@@ -163,11 +166,4 @@ async function run(fn: () => string): Promise<string> {
     }
     throw error;
   }
-}
-
-function dbPath(options: PluginOptions | undefined): string {
-  if (typeof options?.dbPath === "string" && options.dbPath.length > 0) {
-    return options.dbPath;
-  }
-  return defaultDbPath();
 }
