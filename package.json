@@ -1,6 +1,6 @@
 {
   "name": "@log0u7/opencode-memory",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Working memory for OpenCode: shared SQLite store with hybrid search, shared across all sessions on a machine.",
   "type": "module",
   "license": "Apache-2.0",
