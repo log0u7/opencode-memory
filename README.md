@@ -18,7 +18,7 @@ Then register the plugin in `opencode.json`:
 
 ```json
 {
-  "plugin": ["opencode-memory"]
+  "plugin": ["@log0u7/opencode-memory"]
 }
 ```
 
