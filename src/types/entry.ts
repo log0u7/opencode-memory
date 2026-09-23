@@ -1,4 +1,5 @@
-export type EntryKind = "decision" | "fact" | "preference" | "gotcha" | "compaction" | string;
+// Entry kind is free-form; common conventions: decision, fact, preference, gotcha, compaction.
+export type EntryKind = string;
 
 export type Entry = {
   id: string;
