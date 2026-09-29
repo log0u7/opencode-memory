@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/log0u7/opencode-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/log0u7/opencode-memory/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@log0u7/opencode-memory)](https://www.npmjs.com/package/@log0u7/opencode-memory)
+[![Node.js](https://img.shields.io/node/v/@log0u7/opencode-memory?logo=node.js&logoColor=white)](https://www.npmjs.com/package/@log0u7/opencode-memory)
+[![TypeScript](https://img.shields.io/github/package-json/dependency-version/log0u7/opencode-memory/dev/typescript?logo=typescript&logoColor=white)](https://github.com/log0u7/opencode-memory/blob/main/package.json)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Working memory for [OpenCode](https://opencode.ai): a shared SQLite store that all sessions on a machine read and write, so decisions, facts, and compaction summaries survive session boundaries.
