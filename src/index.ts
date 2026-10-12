@@ -6,12 +6,17 @@
  * @packageDocumentation
  */
 
+import { MemoryV2 } from "./plugin-v2.js";
 import { MemoryPlugin } from "./plugin.js";
 
-const pluginModule = {
-  id: "@log0u7/opencode-memory",
+/**
+ * Dual entrypoint: v1 hosts call `server()`, v2 hosts call `setup()`
+ * (see https://opencode.ai/v2/docs/build/plugins/migrate-v1).
+ */
+export const pluginModule = {
+  ...MemoryV2,
   server: MemoryPlugin,
-} satisfies { id: string; server: typeof MemoryPlugin };
+} satisfies { id: string; server: typeof MemoryPlugin; setup: (typeof MemoryV2)["setup"] };
 
 export default pluginModule;
 

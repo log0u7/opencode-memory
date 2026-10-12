@@ -4,20 +4,20 @@ import { openMemoryDb, type MemoryDb } from "./lib/db.js";
 import { forget, list, save, search, SecretDetectedError } from "./lib/store.js";
 import { tool } from "@opencode-ai/plugin";
 
-type PluginOptions = {
+export type PluginOptions = {
   dbPath?: string;
 };
 
-const SYSTEM_GUIDANCE = `You have persistent working memory shared with all OpenCode sessions on this machine.
+export const SYSTEM_GUIDANCE = `You have persistent working memory shared with all OpenCode sessions on this machine.
 At the start of a non-trivial task, run memory_search for relevant decisions and facts about this project.
 When you make a durable decision or learn a lasting fact, call memory_save (kinds: decision, fact, preference, gotcha).
 Never store credentials, tokens, or API keys in memory; the store refuses them.`;
 
-const COMPACTION_CONTEXT =
+export const COMPACTION_CONTEXT =
   "The session is being compacted. After compaction, call memory_save for every durable decision still relevant " +
   "(kind=decision) and any newly learned facts (kind=fact), so other sessions keep this knowledge.";
 
-function defaultDbPath(options?: PluginOptions): string {
+export function defaultDbPath(options?: PluginOptions): string {
   if (typeof options?.dbPath === "string" && options.dbPath.length > 0) {
     return options.dbPath;
   }
