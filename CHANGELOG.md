@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-12
+
+### Added
+
+- Dual-export plugin entry for OpenCode 2: one published package runs on both
+  OpenCode 1.18 and 2.x (official migration pattern, "Support V1 and V2 from
+  one package"). v1 hosts call `server()` (unchanged); v2 hosts call `setup()`
+  (`Plugin.define`). Both entries drive the same engine.
+
 ## [0.1.2] - 2026-09-23
 
 ### Removed
