@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { MemoryPlugin } from "../src/plugin.js";
+import { MAX_LIMIT } from "../src/lib/store.js";
 import type { ToolContext } from "@opencode-ai/plugin";
 
 let dir: string;
@@ -79,6 +80,55 @@ describe("memory plugin tools", () => {
     const all = JSON.parse(String(listed)) as Array<{ id: string }>;
     const forgotten = await tools.memory_forget?.execute({ id: all[0]?.id }, ctx());
     expect(forgotten).toContain("1");
+  });
+
+  it("memory_forget by query stays inside the session scope", async () => {
+    const tools = await loadTools({ dbPath: join(dir, "m.db") });
+
+    await tools.memory_save?.execute(
+      { kind: "fact", title: "postgres batching", body: "uses postgres", tags: [] },
+      ctx(),
+    );
+    await tools.memory_save?.execute(
+      {
+        kind: "fact",
+        title: "postgres sharding",
+        body: "uses postgres",
+        tags: [],
+        scope: "/work/other",
+      },
+      ctx(),
+    );
+
+    const deleted = await tools.memory_forget?.execute({ query: "postgres" }, ctx());
+    expect(deleted).toContain("deleted 1");
+
+    expect(await tools.memory_list?.execute({ scope: "/work/other" }, ctx())).toContain("sharding");
+  });
+
+  it("caps search and list output instead of dumping the store", async () => {
+    const tools = await loadTools({ dbPath: join(dir, "m.db") });
+    for (let i = 0; i < MAX_LIMIT + 5; i++) {
+      await tools.memory_save?.execute(
+        { kind: "fact", title: `postgres note ${i}`, body: "x".repeat(8000), tags: [] },
+        ctx(),
+      );
+    }
+
+    const raw = String(
+      await tools.memory_search?.execute({ query: "postgres", limit: 1e9 }, ctx()),
+    );
+    expect(JSON.parse(raw)).toHaveLength(MAX_LIMIT);
+    expect(raw).toContain("[truncated]");
+  });
+
+  it("refuses credentials hidden in the title", async () => {
+    const tools = await loadTools({ dbPath: join(dir, "m.db") });
+    const result = await tools.memory_save?.execute(
+      { kind: "fact", title: "openai key sk-abcdefghij1234567890", body: "harmless", tags: [] },
+      ctx(),
+    );
+    expect(result).toContain("credential");
   });
 
   it("returns a readable error instead of throwing on secret-looking bodies", async () => {

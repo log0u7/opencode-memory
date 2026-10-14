@@ -6,6 +6,17 @@ import type { Entry, EntryInput } from "../types/entry.js";
 const TITLE_MAX = 120;
 const BODY_MAX = 8000;
 const TAGS_MAX = 12;
+export const TAG_MAX = 64;
+export const KIND_MAX = 64;
+/** Hard ceiling on how many entries one read can return, whatever the caller asks. */
+export const MAX_LIMIT = 50;
+/** A rendered body is a preview, never the full text: it bounds a tool result. */
+export const BODY_PREVIEW_MAX = 500;
+
+export const DEFAULT_LIMIT = { search: 10, list: 20 };
+
+/** Scope used when no worktree and no directory is known, so rows stay addressable. */
+export const FALLBACK_SCOPE = "/";
 
 const SECRET_PATTERNS = [
   /\bsk-[A-Za-z0-9_-]{20,}\b/,
@@ -20,6 +31,19 @@ export class SecretDetectedError extends Error {
   }
 }
 
+/**
+ * One canonical scope string for one location. Callers hand in a worktree, a
+ * directory, or both, so an entry written by either plugin entry point is found
+ * by the other.
+ */
+export function canonicalScope(...candidates: Array<string | undefined>): string {
+  const first = candidates.find((c) => typeof c === "string" && c.trim().length > 0);
+  if (first === undefined) {
+    return FALLBACK_SCOPE;
+  }
+  return first.trim().replace(/\/+$/, "") || FALLBACK_SCOPE;
+}
+
 function validateEntry(input: EntryInput): void {
   if (input.title.length === 0 || input.title.length > TITLE_MAX) {
     throw new TypeError(`title must be 1..${TITLE_MAX} characters`);
@@ -27,28 +51,109 @@ function validateEntry(input: EntryInput): void {
   if (input.body.length > BODY_MAX) {
     throw new TypeError(`body must be at most ${BODY_MAX} characters`);
   }
+  if (input.kind.length === 0 || input.kind.length > KIND_MAX) {
+    throw new TypeError(`kind must be 1..${KIND_MAX} characters`);
+  }
   if (input.tags.length > TAGS_MAX) {
     throw new TypeError(`at most ${TAGS_MAX} tags allowed`);
   }
-  if (
-    SECRET_PATTERNS.some(
-      (pattern) => pattern.test(input.body) || input.tags.some((t) => pattern.test(t)),
-    )
-  ) {
+  // A tool result stays bounded, so a tag cannot smuggle an unbounded payload either.
+  if (input.tags.some((tag) => tag.length > TAG_MAX)) {
+    throw new TypeError(`each tag must be at most ${TAG_MAX} characters`);
+  }
+  if (SECRET_PATTERNS.some((pattern) => looksLikeSecret(input, pattern))) {
     throw new SecretDetectedError();
   }
 }
 
+function looksLikeSecret(input: EntryInput, pattern: RegExp): boolean {
+  if (pattern.test(input.title) || pattern.test(input.kind) || pattern.test(input.body)) {
+    return true;
+  }
+  return input.tags.some((t) => pattern.test(t));
+}
+
+/** A model-supplied limit is untrusted: SQLite reads a negative LIMIT as unbounded,
+ * so anything below one falls back to the default, and anything above the store
+ * ceiling is clamped. */
+export function clampLimit(requested: number | undefined, fallback: number): number {
+  if (requested === undefined || !Number.isFinite(requested) || requested < 1) {
+    return fallback;
+  }
+  return Math.min(Math.trunc(requested), MAX_LIMIT);
+}
+
+function previewBody(body: string): string {
+  if (body.length <= BODY_PREVIEW_MAX) {
+    return body;
+  }
+  return `${body.slice(0, BODY_PREVIEW_MAX)}… [truncated]`;
+}
+
+/**
+ * Model-facing rendering of a result set. Compact JSON and truncated bodies keep a
+ * tool result inside a known size regardless of how much is stored.
+ */
+export function renderEntries(entries: Entry[]): string {
+  return JSON.stringify(entries.map((entry) => ({ ...entry, body: previewBody(entry.body) })));
+}
+
+export function sweep(db: MemoryDb, options: { now?: number } = {}): number {
+  const now = options.now ?? Date.now();
+  db.conn.run("DELETE FROM entries WHERE expires_at IS NOT NULL AND expires_at <= ?", [now]);
+  return db.conn.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
+}
+
 export function save(db: MemoryDb, input: EntryInput, options: { now?: number } = {}): Entry {
   validateEntry(input);
+  const scope = canonicalScope(input.scope);
   const now = options.now ?? Date.now();
-  const id = randomUUID();
 
+  // Expired rows are dead weight in search, so drop them with the save.
+  sweep(db, { now });
+
+  // A repeated title in the same scope is the same knowledge: rewrite it instead of
+  // stacking duplicates.
+  // ponytail: SQLite lower() folds ASCII only, so a non-ASCII title re-saved in a
+  // different case is not deduped; and the read-then-write is not transactional, so two
+  // concurrent saves of the same title can both insert. Ceiling is a rare duplicate, not
+  // data loss. Upgrade path: a normalized key column plus BEGIN IMMEDIATE.
+  const existing = db.conn.get<{ id: string; created_at: number }>(
+    "SELECT id, created_at FROM entries WHERE scope = ? AND lower(trim(title)) = ?",
+    [scope, input.title.trim().toLowerCase()],
+  );
+
+  if (existing) {
+    db.conn.run(
+      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ? WHERE id = ?",
+      [
+        input.kind,
+        input.body,
+        JSON.stringify(input.tags),
+        now,
+        input.expires_at ?? null,
+        existing.id,
+      ],
+    );
+    return {
+      id: existing.id,
+      scope,
+      kind: input.kind,
+      title: input.title,
+      body: input.body,
+      tags: input.tags,
+      created_at: existing.created_at,
+      updated_at: now,
+      expires_at: input.expires_at,
+    };
+  }
+
+  const id = randomUUID();
   db.conn.run(
     "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       id,
-      input.scope,
+      scope,
       input.kind,
       input.title,
       input.body,
@@ -61,7 +166,7 @@ export function save(db: MemoryDb, input: EntryInput, options: { now?: number } 
 
   return {
     id,
-    scope: input.scope,
+    scope,
     kind: input.kind,
     title: input.title,
     body: input.body,
@@ -76,26 +181,34 @@ export function search(
   db: MemoryDb,
   query: { query: string; scope: string; limit?: number; now?: number },
 ): Entry[] {
-  const limit = query.limit ?? 10;
+  const scope = canonicalScope(query.scope);
+  const limit = clampLimit(query.limit, DEFAULT_LIMIT.search);
   const now = query.now ?? Date.now();
 
-  return db.conn
-    .all<Row>(
-      `SELECT e.* FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid
-       WHERE entries_fts MATCH ? AND (e.scope = ? OR e.scope = 'global')
-         AND (e.expires_at IS NULL OR e.expires_at > ?)
-       ORDER BY bm25(entries_fts) ASC, e.updated_at DESC
-       LIMIT ?`,
-      [escapeFtsQuery(query.query), query.scope, now, limit],
-    )
-    .map(rowToEntry);
+  for (const match of searchCandidates(query.query)) {
+    const hits = db.conn
+      .all<Row>(
+        `SELECT e.* FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid
+         WHERE entries_fts MATCH ? AND (e.scope = ? OR e.scope = 'global')
+           AND (e.expires_at IS NULL OR e.expires_at > ?)
+         ORDER BY bm25(entries_fts) ASC, e.updated_at DESC
+         LIMIT ?`,
+        [match, scope, now, limit],
+      )
+      .map(rowToEntry);
+    if (hits.length > 0) {
+      return hits;
+    }
+  }
+  return [];
 }
 
 export function list(
   db: MemoryDb,
   query: { scope: string; limit?: number; now?: number },
 ): Entry[] {
-  const limit = query.limit ?? 20;
+  const scope = canonicalScope(query.scope);
+  const limit = clampLimit(query.limit, DEFAULT_LIMIT.list);
   const now = query.now ?? Date.now();
 
   return db.conn
@@ -104,23 +217,45 @@ export function list(
        WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?)
        ORDER BY updated_at DESC, id ASC
        LIMIT ?`,
-      [query.scope, now, limit],
+      [scope, now, limit],
     )
     .map(rowToEntry);
 }
 
-export function forget(db: MemoryDb, target: { id: string } | { query: string }): number {
+export type ForgetTarget = { scope: string } & ({ id: string } | { query: string });
+
+/**
+ * Deletes inside one scope (plus the shared `global` scope), never across the whole
+ * machine: the store is shared, so an unscoped delete would silently hit other
+ * projects.
+ */
+export function forget(db: MemoryDb, target: ForgetTarget): number {
+  const scope = canonicalScope(target.scope);
+
   if ("id" in target) {
-    db.conn.run("DELETE FROM entries WHERE id = ?", [target.id]);
-    return db.conn.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
+    db.conn.run("DELETE FROM entries WHERE id = ? AND (scope = ? OR scope = 'global')", [
+      target.id,
+      scope,
+    ]);
+    return changesOf(db);
   }
 
+  // Deleting is precision-first: only the strict all-token match, never the fuzzy
+  // fallback. A wrong read costs the model a retry, a wrong delete is unrecoverable.
+  const match = strictMatch(target.query);
+  if (match === null) {
+    return 0;
+  }
   db.conn.run(
     `DELETE FROM entries WHERE id IN (
        SELECT e.id FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid WHERE entries_fts MATCH ?
-     )`,
-    [escapeFtsQuery(target.query)],
+     ) AND (scope = ? OR scope = 'global')`,
+    [match, scope],
   );
+  return changesOf(db);
+}
+
+function changesOf(db: MemoryDb): number {
   return db.conn.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
 }
 
@@ -149,12 +284,33 @@ function parseTags(raw: string): string[] {
   }
 }
 
-// FTS5 queries treat punctuation as operators; wrap each whitespace-separated
-// token in double quotes so arbitrary user/model input stays a literal search.
-function escapeFtsQuery(raw: string): string {
+/**
+ * FTS5 candidates, most precise first, each quoted so arbitrary model input stays a
+ * literal search. The strict AND match is tried before the looser prefix OR match:
+ * recall matters more than precision once the strict match found nothing.
+ */
+function searchCandidates(raw: string): string[] {
+  const strict = strictMatch(raw);
+  const loose = prefixMatch(raw);
+  return [strict, loose].filter((candidate): candidate is string => candidate !== null);
+}
+
+/** Every token must appear. Used alone by destructive paths, where a false positive
+ * cannot be undone. */
+function strictMatch(raw: string): string | null {
+  const tokens = tokenize(raw);
+  return tokens.length === 0 ? null : tokens.map((token) => `"${token}"`).join(" ");
+}
+
+/** Any token may match, each as a prefix. Read-only recall only. */
+function prefixMatch(raw: string): string | null {
+  const tokens = tokenize(raw);
+  return tokens.length === 0 ? null : tokens.map((token) => `"${token}" *`).join(" OR ");
+}
+
+function tokenize(raw: string): string[] {
   return raw
     .split(/\s+/)
     .filter(Boolean)
-    .map((token) => `"${token.replaceAll('"', '""')}"`)
-    .join(" ");
+    .map((token) => token.replaceAll('"', ""));
 }
