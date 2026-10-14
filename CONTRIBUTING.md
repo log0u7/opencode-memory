@@ -7,7 +7,8 @@ Thanks for contributing. This document covers the workflow, quality bar, and con
 - `main` is the only branch: protected (PRs required, no force pushes), always deployable, tagged `vX.Y.Z` for releases.
 - Branch from `main`, name it `feat/...`, `fix/...`, or `docs/...` (max three words, hyphenated), open a PR back into `main`.
 - Keep branches short-lived: merge or drop within days, rebase onto `main` when needed.
-- Merge style: the maintainer merges with `--no-ff` (personal preference while the project is single-maintainer; revisit squash or fast-forward when outside contributors arrive).
+- Merge style: `--no-ff`, so every PR lands as exactly one merge commit. That is a team property, not a solo habit: `git log --merges --first-parent main` reads as the list of PRs in merge order, and one merge commit is a single atomic revert unit (`git revert -m 1`). Squash merge is rejected because PR commits here carry meaning (a `fix` and a `feat` in one PR stay separate commits); rebase merge is rejected because it loses the atomic revert. The only cost, one extra commit per PR, is bounded by keeping PRs at five commits or fewer.
+- Rebase onto `main` right before merging, so the merge commit stays a single clean commit.
 - Releases: date-stamp the changelog, bump `package.json`, commit `chore(release): X.Y.Z`, tag `vX.Y.Z` and push: the publish workflow publishes to npm via trusted publishing.
 - Hotfixes are just fixes: branch from `main`, PR, merge, tag a patch release.
 
