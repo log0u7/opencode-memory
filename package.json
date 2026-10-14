@@ -38,7 +38,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "verify": "pnpm run check && pnpm run typecheck && pnpm run test",
+    "verify": "pnpm run check && pnpm run typecheck && pnpm run test:coverage",
     "prepare": "lefthook install"
   },
   "packageManager": "pnpm@11.0.0",

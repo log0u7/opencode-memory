@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (3), `transcriptChars` (8000). Subagent sessions are skipped and the run is
   best-effort: failures are silent.
 
+### Changed
+
+- `pnpm verify` (and therefore CI) now runs the suite with coverage, so the coverage gate
+  the docs promise (90% lines/functions/statements, 80% branches) is actually enforced
+  instead of only configured.
+
 ### Fixed
 
 - `memory_forget` by id now deletes across scopes: ids are globally unique, so an exact
