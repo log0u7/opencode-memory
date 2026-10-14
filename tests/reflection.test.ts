@@ -221,4 +221,45 @@ describe("createReflection", () => {
     await flush();
     expect(d.generate).not.toHaveBeenCalled();
   });
+
+  it("settles the session after a failed attempt, so it is not retried", async () => {
+    const d = deps({
+      generate: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+    });
+    const onIdle = createReflection(enabled(), d);
+    onIdle("s1");
+    await vi.waitFor(() => expect(d.generate).toHaveBeenCalledTimes(1));
+    onIdle("s1");
+    await flush();
+    expect(d.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops an idle landing during an unsettled run, then retries once", async () => {
+    let release: ((text: string) => void) | undefined;
+    const d = deps({
+      transcript: vi.fn(
+        () =>
+          new Promise<string>((resolve) => {
+            release = resolve;
+          }),
+      ),
+    });
+    const onIdle = createReflection(enabled(), d);
+    onIdle("s1");
+    await flush();
+    expect(d.transcript).toHaveBeenCalledTimes(1);
+    onIdle("s1");
+    await flush();
+    expect(d.transcript).toHaveBeenCalledTimes(1);
+    release?.("too short");
+    await flush();
+    onIdle("s1");
+    await flush();
+    expect(d.transcript).toHaveBeenCalledTimes(2);
+    release?.("too short");
+    await flush();
+    expect(d.generate).not.toHaveBeenCalled();
+  });
 });
