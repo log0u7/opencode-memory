@@ -14,7 +14,7 @@ Every session gets four tools (`memory_save`, `memory_search`, `memory_list`, `m
 
 - Results are capped: at most 50 entries per call, and each body is rendered as a 500-character preview. A tool result has a bounded size whatever the model asks for.
 - `memory_save` rewrites an entry that repeats a scope and title instead of stacking duplicates, and purges expired rows.
-- `memory_forget` only deletes inside the caller's scope (plus the shared `global` scope).
+- `memory_forget` by query only deletes inside the caller's scope (plus the shared `global` scope); by id it deletes the entry wherever it lives, since ids are globally unique.
 - Entries that look like secrets (`sk-…`, `ghp_…`, `xoxb-…`) are refused, in the title, kind, body and tags alike.
 
 ## Install

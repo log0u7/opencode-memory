@@ -167,6 +167,26 @@ describe("createReflection", () => {
     expect(d.generate).not.toHaveBeenCalled();
   });
 
+  it("retries after a too-short first idle instead of poisoning the session", async () => {
+    let calls = 0;
+    const d = deps({
+      transcript: vi.fn(async () => {
+        calls += 1;
+        return calls === 1 ? "too short" : TRANSCRIPT;
+      }),
+    });
+    const onIdle = createReflection(enabled(), d);
+    onIdle("s1");
+    await flush();
+    expect(d.generate).not.toHaveBeenCalled();
+    onIdle("s1");
+    await vi.waitFor(() => expect(d.generate).toHaveBeenCalledTimes(1));
+    expect(d.saveLesson).toHaveBeenCalledWith(
+      "batch first",
+      "batching by 1000 avoided lock contention",
+    );
+  });
+
   it("ignores malformed model replies without throwing", async () => {
     const d = deps({ generate: vi.fn(async () => "absolute garbage") });
     const onIdle = createReflection(enabled(), d);

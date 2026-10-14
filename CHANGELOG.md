@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   id match is precise anywhere, and closed worktrees stay cleanable from any project.
   Query deletes keep the scope lock (a fuzzy match must never silently hit other
   projects).
+- Reflection no longer permanently skips a session whose first `session.idle` arrived
+  before the transcript reached the distillation floor: the session is marked reflected
+  only once a run is actually attempted, so a later, longer turn still gets exactly one
+  reflection.
+- The README safety-limits note on `memory_forget` now matches the code: query deletes
+  stay in scope, id deletes are global.
 
 ## [0.3.0] - 2026-10-14
 
