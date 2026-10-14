@@ -167,6 +167,26 @@ describe("createReflection", () => {
     expect(d.generate).not.toHaveBeenCalled();
   });
 
+  it("retries after a too-short first idle instead of poisoning the session", async () => {
+    let calls = 0;
+    const d = deps({
+      transcript: vi.fn(async () => {
+        calls += 1;
+        return calls === 1 ? "too short" : TRANSCRIPT;
+      }),
+    });
+    const onIdle = createReflection(enabled(), d);
+    onIdle("s1");
+    await flush();
+    expect(d.generate).not.toHaveBeenCalled();
+    onIdle("s1");
+    await vi.waitFor(() => expect(d.generate).toHaveBeenCalledTimes(1));
+    expect(d.saveLesson).toHaveBeenCalledWith(
+      "batch first",
+      "batching by 1000 avoided lock contention",
+    );
+  });
+
   it("ignores malformed model replies without throwing", async () => {
     const d = deps({ generate: vi.fn(async () => "absolute garbage") });
     const onIdle = createReflection(enabled(), d);
@@ -198,6 +218,47 @@ describe("createReflection", () => {
     });
     const onIdle = createReflection(enabled(), d);
     expect(() => onIdle("s1")).not.toThrow();
+    await flush();
+    expect(d.generate).not.toHaveBeenCalled();
+  });
+
+  it("settles the session after a failed attempt, so it is not retried", async () => {
+    const d = deps({
+      generate: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+    });
+    const onIdle = createReflection(enabled(), d);
+    onIdle("s1");
+    await vi.waitFor(() => expect(d.generate).toHaveBeenCalledTimes(1));
+    onIdle("s1");
+    await flush();
+    expect(d.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops an idle landing during an unsettled run, then retries once", async () => {
+    let release: ((text: string) => void) | undefined;
+    const d = deps({
+      transcript: vi.fn(
+        () =>
+          new Promise<string>((resolve) => {
+            release = resolve;
+          }),
+      ),
+    });
+    const onIdle = createReflection(enabled(), d);
+    onIdle("s1");
+    await flush();
+    expect(d.transcript).toHaveBeenCalledTimes(1);
+    onIdle("s1");
+    await flush();
+    expect(d.transcript).toHaveBeenCalledTimes(1);
+    release?.("too short");
+    await flush();
+    onIdle("s1");
+    await flush();
+    expect(d.transcript).toHaveBeenCalledTimes(2);
+    release?.("too short");
     await flush();
     expect(d.generate).not.toHaveBeenCalled();
   });

@@ -108,25 +108,35 @@ export function createReflection(
   const inFlight = new Set<string>();
 
   const run = async (sessionID: string) => {
+    // Only a session we actually tried to reflect is marked done. A too-short
+    // transcript leaves it unsettled, so a later, longer idle can still reflect it
+    // once: idle fires at the end of every turn, not once per session.
+    let settled = false;
     try {
       if (await deps.isSubagent(sessionID)) {
+        settled = true;
         return;
       }
       const tail = (await deps.transcript(sessionID)).slice(-config.transcriptChars);
       if (tail.length < Math.min(TRANSCRIPT_MIN_CHARS, config.transcriptChars)) {
         return;
       }
+      settled = true;
       const reply = await deps.generate(distillPrompt(tail, config.maxLessons), sessionID);
       for (const lesson of parseLessons(reply, config.maxLessons)) {
         deps.saveLesson(lesson.title, lesson.body);
       }
     } catch {
-      // Reflection is best-effort: never surface a failure to the host.
+      // Reflection is best-effort: never surface a failure to the host. A failed
+      // attempt still settles the session so a broken pipeline is not retried forever.
+      settled = true;
     } finally {
       inFlight.delete(sessionID);
-      done.add(sessionID);
-      if (done.size > MAX_TRACKED) {
-        done.clear();
+      if (settled) {
+        done.add(sessionID);
+        if (done.size > MAX_TRACKED) {
+          done.clear();
+        }
       }
     }
   };
