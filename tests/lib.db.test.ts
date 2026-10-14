@@ -69,7 +69,9 @@ describe("openMemoryDb", () => {
     "leaves a directory it did not create to its owner",
     () => {
       const parent = join(dir, "shared");
-      mkdirSync(parent, 0o755);
+      mkdirSync(parent);
+      // Umask-independent: the point is that openMemoryDb leaves the mode alone.
+      chmodSync(parent, 0o755);
       const file = join(parent, "memory.db");
       const db = openMemoryDb(file);
       db.close();
