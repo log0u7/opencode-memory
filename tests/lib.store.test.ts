@@ -292,6 +292,15 @@ describe("store.forget", () => {
     db.close();
   });
 
+  it("deletes by id across scopes, so closed worktrees stay cleanable", () => {
+    const db = openMemoryDb(":memory:");
+    const zombie = save(db, input({ title: "zombie note", scope: "/old/worktree" }));
+
+    expect(forget(db, { id: zombie.id, scope: "/work/project" })).toBe(1);
+    expect(list(db, { scope: "/old/worktree" })).toEqual([]);
+    db.close();
+  });
+
   it("deletes global entries from any scope but never foreign ones", () => {
     const db = openMemoryDb(":memory:");
     save(db, input({ title: "postgres tuning", scope: "global" }));
@@ -303,12 +312,12 @@ describe("store.forget", () => {
     db.close();
   });
 
-  it("refuses to delete by id outside the caller scope", () => {
+  it("deletes a foreign-scoped entry by id (ids are globally unique)", () => {
     const db = openMemoryDb(":memory:");
     const foreign = save(db, input({ title: "postgres replica", scope: "/work/other" }));
 
-    expect(forget(db, { id: foreign.id, scope: "/work/project" })).toBe(0);
-    expect(list(db, { scope: "/work/other" })).toHaveLength(1);
+    expect(forget(db, { id: foreign.id, scope: "/work/project" })).toBe(1);
+    expect(list(db, { scope: "/work/other" })).toEqual([]);
     db.close();
   });
 

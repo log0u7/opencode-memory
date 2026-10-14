@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (3), `transcriptChars` (8000). Subagent sessions are skipped and the run is
   best-effort: failures are silent.
 
+### Fixed
+
+- `memory_forget` by id now deletes across scopes: ids are globally unique, so an exact
+  id match is precise anywhere, and closed worktrees stay cleanable from any project.
+  Query deletes keep the scope lock (a fuzzy match must never silently hit other
+  projects).
+
 ## [0.3.0] - 2026-10-14
 
 ### Added
