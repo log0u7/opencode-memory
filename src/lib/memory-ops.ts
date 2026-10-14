@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 
 import type { MemoryDb } from "./db.js";
-import { forget, list, renderEntries, save, search, SecretDetectedError } from "./store.js";
+import { forget, list, renderEntries, save, search, SecretDetectedError, stats } from "./store.js";
 
 // Optional properties accept undefined explicitly: the two SDK dialects hand raw
 // tool arguments straight through, and the build enables exactOptionalPropertyTypes.
@@ -23,6 +23,7 @@ export type MemoryOps = {
   search: (args: SearchArgs, scope: string) => string;
   list: (args: ListArgs, scope: string) => string;
   forget: (args: ForgetArgs, scope: string) => string;
+  stats: (scope: string) => string;
 };
 
 export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
@@ -68,6 +69,15 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
         }
         return "provide id or query";
       }),
+    stats: (scope) =>
+      run(() => {
+        const counts = stats(getDb(), { scope });
+        if (counts.length === 0) {
+          return "no memory entries";
+        }
+        const total = counts.reduce((sum, row) => sum + row.count, 0);
+        return `${counts.map((row) => `${row.kind}: ${row.count}`).join(", ")}, total: ${total}`;
+      }),
   };
 }
 
@@ -84,6 +94,8 @@ export const TOOL_DESCRIPTIONS = {
   list: "List recent memory entries for a scope (default: this project), newest first.",
   forget:
     "Delete memory entries by id (any scope: ids are globally unique), or all entries matching a query. Query deletes stay inside this project's scope (plus global entries); an entry saved under another scope needs its id, or that scope, to be removed.",
+  stats:
+    "Count memory entries by kind for this project (plus global entries), with a total. Use it to see how much memory already exists, for example how many lessons reflection has written.",
 } as const;
 
 /**

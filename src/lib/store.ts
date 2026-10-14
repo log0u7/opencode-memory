@@ -234,6 +234,21 @@ export function list(
 
 export type ForgetTarget = { scope: string } & ({ id: string } | { query: string });
 
+/** Counts by kind for one scope plus `global`, expired entries excluded. */
+export function stats(
+  db: MemoryDb,
+  query: { scope: string; now?: number },
+): Array<{ kind: string; count: number }> {
+  const scope = canonicalScope(query.scope);
+  const now = query.now ?? Date.now();
+  return db.conn.all<{ kind: string; count: number }>(
+    `SELECT kind, COUNT(*) AS count FROM entries
+     WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?)
+     GROUP BY kind ORDER BY count DESC, kind ASC`,
+    [scope, now],
+  );
+}
+
 /**
  * Query deletes stay inside one scope (plus the shared `global` scope): a fuzzy match
  * must never silently hit other projects' entries. Id deletes are machine-wide because

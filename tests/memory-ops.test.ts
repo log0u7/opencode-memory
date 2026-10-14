@@ -28,6 +28,30 @@ function store() {
 }
 
 describe("memory ops", () => {
+  it("counts entries by kind for the scope plus global, ignoring expired ones", () => {
+    const { ops, getDb, close } = store();
+    ops.save({ kind: "lesson", title: "lesson one", body: "x" }, "/w");
+    ops.save({ kind: "lesson", title: "lesson two", body: "x" }, "/other");
+    ops.save({ kind: "fact", title: "local fact", body: "x" }, "/w");
+    ops.save({ kind: "fact", title: "global fact", body: "x" }, "global");
+    ops.save({ kind: "decision", title: "stale decision", body: "x" }, "/w");
+    getDb().conn.run("UPDATE entries SET expires_at = 1 WHERE title = 'stale decision'");
+
+    const result = ops.stats("/w");
+
+    expect(result).toContain("lesson: 1");
+    expect(result).toContain("fact: 2");
+    expect(result).toContain("total: 3");
+    expect(result).not.toContain("decision");
+    close();
+  });
+
+  it("reports an empty store readably in stats", () => {
+    const { ops, close } = store();
+    expect(ops.stats("/w")).toBe("no memory entries");
+    close();
+  });
+
   it("returns the same model-facing text for every operation", () => {
     const { ops, close } = store();
 

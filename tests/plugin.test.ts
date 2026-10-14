@@ -102,14 +102,29 @@ function reflectionClient(promptImpl?: unknown) {
 }
 
 describe("memory plugin tools", () => {
-  it("registers the four memory tools", async () => {
+  it("registers the five memory tools", async () => {
     const tools = await loadTools({ dbPath: join(dir, "m.db") });
     expect(Object.keys(tools).sort()).toEqual([
       "memory_forget",
       "memory_list",
       "memory_save",
       "memory_search",
+      "memory_stats",
     ]);
+  });
+
+  it("reports counts per kind through memory_stats", async () => {
+    const tools = await loadTools({ dbPath: join(dir, "m.db") });
+    await tools.memory_save?.execute(
+      { kind: "lesson", title: "retry with backoff", body: "b" },
+      ctx(),
+    );
+    await tools.memory_save?.execute({ kind: "fact", title: "port 5432", body: "b" }, ctx());
+
+    const result = await tools.memory_stats?.execute({}, ctx());
+    expect(result).toContain("lesson: 1");
+    expect(result).toContain("fact: 1");
+    expect(result).toContain("total: 2");
   });
 
   it("saves, searches, and forgets with worktree as default scope", async () => {

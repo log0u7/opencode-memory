@@ -210,6 +210,18 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
         execute: async (args, context) =>
           ops.forget(args, defaultScope(context.worktree, context.directory)),
       }),
+
+      memory_stats: tool({
+        description: TOOL_DESCRIPTIONS.stats,
+        args: {
+          scope: tool.schema
+            .string()
+            .optional()
+            .describe("Scope key; defaults to this session's worktree"),
+        },
+        execute: async (args, context) =>
+          ops.stats(defaultScope(args.scope ?? context.worktree ?? context.directory)),
+      }),
     },
   };
 
