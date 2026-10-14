@@ -7,11 +7,7 @@ import {
   memoryInventory,
   oncePerSession,
 } from "./lib/memory-ops.js";
-import {
-  createReflection,
-  parseReflectionConfig,
-  type ReflectionConfig,
-} from "./lib/reflection.js";
+import { createReflection, parseReflectionConfig } from "./lib/reflection.js";
 import {
   SYSTEM_GUIDANCE,
   COMPACTION_CONTEXT,

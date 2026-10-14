@@ -99,7 +99,11 @@ function reflectionDeps(
       try {
         const reply = await client.session.prompt({
           path: { id },
-          body: { parts: [{ type: "text", text: prompt }], ...(model ? { model } : {}) },
+          body: {
+            parts: [{ type: "text", text: prompt }],
+            system: REFLECTION_SYSTEM,
+            ...(model ? { model } : {}),
+          },
         });
         return (reply.data?.parts ?? [])
           .filter((part) => part.type === "text")
