@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -34,6 +34,52 @@ describe("openMemoryDb", () => {
 
     db.close();
   });
+
+  it.skipIf(process.platform === "win32")(
+    "creates the store file and its directory with restrictive permissions",
+    () => {
+      const file = join(dir, "nested", "memory.db");
+      const db = openMemoryDb(file);
+
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+      expect(statSync(join(dir, "nested")).mode & 0o777).toBe(0o700);
+      for (const suffix of ["-wal", "-shm"]) {
+        expect(statSync(`${file}${suffix}`).mode & 0o777).toBe(0o600);
+      }
+      db.close();
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "tightens an existing store created with loose permissions",
+    () => {
+      const file = join(dir, "memory.db");
+      const db = openMemoryDb(file);
+      db.close();
+      chmodSync(file, 0o666);
+
+      const reopened = openMemoryDb(file);
+      reopened.close();
+
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "leaves a directory it did not create to its owner",
+    () => {
+      const parent = join(dir, "shared");
+      mkdirSync(parent);
+      // Umask-independent: the point is that openMemoryDb leaves the mode alone.
+      chmodSync(parent, 0o755);
+      const file = join(parent, "memory.db");
+      const db = openMemoryDb(file);
+      db.close();
+
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+      expect(statSync(parent).mode & 0o777).toBe(0o755);
+    },
+  );
 
   it("keeps the FTS index in sync through triggers", () => {
     const db = openMemoryDb(join(dir, "memory.db"));

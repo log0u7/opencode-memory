@@ -129,12 +129,17 @@ describe("memory inventory", () => {
 
   it("stays within the character budget whatever the store size", () => {
     const { ops, dbPath, getDb, close } = store();
+    // One transaction instead of 200 autocommits: the point is the budget, not
+    // fsync throughput, and throttled CI runners otherwise push this past the
+    // default 5s test timeout.
+    getDb().conn.run("BEGIN");
     for (let i = 0; i < MAX_ENTRIES; i++) {
       ops.save(
         { kind: "fact", title: `entry number ${i} with a long descriptive title`, body: "x" },
         "/w",
       );
     }
+    getDb().conn.run("COMMIT");
     const inventory = memoryInventory(getDb, dbPath, "/w");
     expect(inventory).not.toBeNull();
     expect((inventory as string).length).toBeLessThanOrEqual(INVENTORY_MAX_CHARS);

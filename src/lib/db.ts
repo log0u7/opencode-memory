@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { openSqlite, type SqliteConn } from "./sqlite.js";
@@ -37,15 +37,38 @@ END;
 CREATE INDEX IF NOT EXISTS entries_scope_title ON entries(scope, lower(trim(title)));
 `;
 
+// SECURITY.md promises restrictive permissions whatever the user's umask is, so the
+// directory and files are mode-enforced explicitly instead of left to the umask.
+// POSIX only: chmodSync on Windows flips a read-only bit, which would corrupt usage.
+// Directories the plugin did not create are left to their owner: the db file is
+// 0600 anyway, so a loose parent only leaks file names.
+const POSIX = process.platform !== "win32";
+
 export function openMemoryDb(path: string): MemoryDb {
   if (path !== ":memory:") {
-    mkdirSync(dirname(path), { recursive: true });
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   }
 
   const conn = openSqlite(path);
   conn.run("PRAGMA journal_mode = WAL");
   conn.run("PRAGMA busy_timeout = 5000");
   conn.exec(SCHEMA);
+
+  if (POSIX && path !== ":memory:") {
+    // Also fixes databases created earlier with a permissive umask.
+    chmodSync(path, 0o600);
+    for (const suffix of ["-wal", "-shm"]) {
+      try {
+        chmodSync(`${path}${suffix}`, 0o600);
+      } catch (error) {
+        // Only tolerate a sidecar that is not written yet (or already
+        // checkpointed away); anything else is a real failure.
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
+      }
+    }
+  }
 
   return { conn, close: () => conn.close() };
 }

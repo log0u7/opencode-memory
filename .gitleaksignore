@@ -1,0 +1,3 @@
+tests/lib.store.test.ts:aws-access-token:66
+tests/lib.store.test.ts:gitlab-pat:69
+tests/lib.store.test.ts:gcp-api-key:73

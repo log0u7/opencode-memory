@@ -14,4 +14,4 @@ Use GitHub private vulnerability reporting: repository page -> Security -> Repor
 ## Hardening notes
 
 - The store refuses entries that look like common API-key formats, but this is best-effort: do not save credentials through the model.
-- Data path: `~/.local/share/opencode-memory/memory.db` (honors `XDG_DATA_HOME`), created with restrictive permissions (umask 077).
+- Data path: `~/.local/share/opencode-memory/memory.db` (honors `XDG_DATA_HOME`), created with restrictive permissions: the file is `0600` (enforced on every open, so databases created earlier with a permissive umask are tightened too) and the directory is `0700` when the plugin creates it.

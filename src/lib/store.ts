@@ -18,10 +18,18 @@ export const DEFAULT_LIMIT = { search: 10, list: 20 };
 /** Scope used when no worktree and no directory is known, so rows stay addressable. */
 export const FALLBACK_SCOPE = "/";
 
+// High-confidence credential formats only: a generic "password =" rule would block
+// ordinary prose. Extend with care, one false positive costs a legitimate save.
 const SECRET_PATTERNS = [
-  /\bsk-[A-Za-z0-9_-]{20,}\b/,
-  /\bghp_[A-Za-z0-9]{30,}\b/,
-  /\bxoxb-\d{10,}-\d{10,}\b/,
+  /\bsk-[A-Za-z0-9_-]{20,}\b/, // OpenAI-style
+  /\bghp_[A-Za-z0-9]{30,}\b/, // GitHub PAT
+  /\bxoxb-\d{10,}-\d{10,}\b/, // Slack bot token
+  /\bxox[ap]-[0-9A-Za-z-]{10,}/, // Slack user / app token
+  /\bAKIA[0-9A-Z]{16}\b/, // AWS access key id
+  /\bglpat-[0-9A-Za-z_-]{20,}\b/, // GitLab PAT
+  /\bAIza[0-9A-Za-z_-]{35}/, // Google API key
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/, // JWT
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/, // PEM private key block header
 ];
 
 export class SecretDetectedError extends Error {
