@@ -7,12 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Deterministic injection: the first request of each session carries a bounded list of the
+  project's most recent entries (titles, kinds, dates, no bodies, ~1200 characters worst
+  case), so using memory no longer depends on the model remembering to call
+  `memory_search`. The tool stays for deeper lookups.
+- Compaction inventory: the compaction context now lists the stored entries next to the
+  save instruction, so the model summarises from an inventory instead of recall and stops
+  re-saving what is already stored.
+
 ### Changed
 
+- Both plugin entry points (`server` for OpenCode 1, `setup` for OpenCode 2) now delegate
+  to one shared core (`src/lib/memory-ops.ts`): tool behaviour, error-to-text mapping,
+  caps and rendering live in a single place, and each host is thin SDK glue. No
+  behavioural change.
+- The system guidance no longer tells the model to search at task start (the injection
+  covers it); the credential warning and both tool mentions stay.
 - CONTRIBUTING.md states the merge-policy rationale instead of a solo-maintainer
   preference: `--no-ff` keeps one merge commit per PR, which reads as the PR list via
   `git log --merges --first-parent main` and is a single atomic revert unit, with a
   five-commit PR ceiling bounding the cost. Documentation only, no package change.
+
+### Fixed
+
+- `memory_forget` by query or id could delete entries of other projects: deletes are now
+  scoped to the caller's scope (plus `global`), like `memory_search` and `memory_list`.
+- A model-supplied `limit` crashed `memory_search`/`memory_list` (fractional, `NaN`) or
+  returned the whole store (`-1`, which SQLite reads as unbounded). Limits are clamped to
+  1..50, and tool results are bounded: bodies render as 500-character previews.
+- A credential in an entry `title` or `kind` bypassed the secret guard; the scan now covers
+  title, kind, body and tags, and `kind` has a length cap.
+- Search returned nothing for partial queries (`"migration strategy"` found no entry
+  containing "migration", and `"migrat"` found nothing): a strict AND match is now retried
+  as a prefix OR match, and an empty query returns no results instead of failing.
+- The two plugin entry points defaulted to different scopes for the same project (v1 used
+  the session worktree, v2 the plugin directory) and disagreed about trailing slashes.
+  Both now derive one canonical scope key.
+
+### Fixed (build)
+
+- The published package could not be loaded by a Node host: `src/lib/sqlite.ts` called a
+  bare `require("node:sqlite")`, which is undefined in an ES module. The Node branch now
+  uses `createRequire(import.meta.url)`.
+
+### Changed
+
+- `memory_save` rewrites an entry that repeats a scope and title instead of adding a
+  duplicate, which stopped the store from growing with every compaction.
+- Saving purges rows past their `expires_at` instead of only hiding them at query time.
+
+### Removed
+
+- README advertised an FTS5 "recency boost" that the code never implemented; the actual
+  ranking (BM25, newest first on ties) is documented instead.
+>>>>>>> f9f2078 (feat: memory injection, compaction inventory and store hardening)
 
 ## [0.2.0] - 2026-10-12
 

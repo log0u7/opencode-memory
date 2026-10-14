@@ -34,6 +34,7 @@ CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
   INSERT INTO entries_fts(entries_fts, rowid, title, body, tags) VALUES ('delete', old.rowid, old.title, old.body, old.tags);
   INSERT INTO entries_fts(rowid, title, body, tags) VALUES (new.rowid, new.title, new.body, new.tags);
 END;
+CREATE INDEX IF NOT EXISTS entries_scope_title ON entries(scope, lower(trim(title)));
 `;
 
 export function openMemoryDb(path: string): MemoryDb {

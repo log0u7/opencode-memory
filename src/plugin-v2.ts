@@ -1,10 +1,16 @@
 import { Plugin } from "@opencode/plugin";
 
 import { openMemoryDb, type MemoryDb } from "./lib/db.js";
-import { forget, list, save, search, SecretDetectedError } from "./lib/store.js";
+import {
+  TOOL_DESCRIPTIONS,
+  createMemoryOps,
+  memoryInventory,
+  oncePerSession,
+} from "./lib/memory-ops.js";
 import {
   SYSTEM_GUIDANCE,
   COMPACTION_CONTEXT,
+  defaultScope,
   defaultDbPath,
   type PluginOptions,
 } from "./plugin.js";
@@ -15,40 +21,19 @@ export const MemoryV2 = Plugin.define({
   id: "@log0u7/opencode-memory",
   async setup(ctx) {
     const options = ctx.options as PluginOptions;
+    const dbPath = defaultDbPath(options);
     let db: MemoryDb | null = null;
+    const getDb = (): MemoryDb => (db ??= openMemoryDb(dbPath));
+    const ops = createMemoryOps(getDb);
 
-    const getDb = (): MemoryDb => {
-      if (!db) {
-        db = openMemoryDb(defaultDbPath(options));
-      }
-      return db;
-    };
-
-    // Tool results are shown to the model: caught errors become readable text, so
-    // a rejected save is guidance instead of a crashed tool call.
-    const run = async (fn: () => string): Promise<string> => {
-      try {
-        return fn();
-      } catch (error) {
-        if (error instanceof SecretDetectedError) {
-          return "refused: the content looks like a credential; secrets must never be stored in memory";
-        }
-        if (error instanceof Error) {
-          return `error: ${error.message}`;
-        }
-        throw error;
-      }
-    };
-
-    // v1 scoped entries per session worktree; the v2 tool context carries no
-    // worktree, so entries default to the plugin location's directory.
-    const defaultScope = ctx.location.directory;
+    // Request and compaction hooks carry no directory: the instance scope is the project.
+    const projectScope = defaultScope(undefined, ctx.location.directory);
+    const injected = oncePerSession();
 
     await ctx.tool.transform((editor) => {
       editor.add({
         name: "memory_save",
-        description:
-          "Save a durable entry to shared working memory (decisions, facts, preferences, gotchas). Never store credentials.",
+        description: TOOL_DESCRIPTIONS.save,
         input: {
           type: "object",
           properties: {
@@ -75,25 +60,14 @@ export const MemoryV2 = Plugin.define({
             expires_at?: number;
           };
           return {
-            content: await run(() => {
-              const entry = save(getDb(), {
-                scope: a.scope ?? defaultScope,
-                kind: a.kind,
-                title: a.title,
-                body: a.body,
-                tags: a.tags ?? [],
-                expires_at: a.expires_at ?? null,
-              });
-              return `saved ${entry.id} (${entry.scope})`;
-            }),
+            content: ops.save(a, defaultScope(undefined, a.scope ?? ctx.location.directory)),
           };
         },
       });
 
       editor.add({
         name: "memory_search",
-        description:
-          "Search shared working memory (all sessions on this machine). Results include this project's scope and global entries.",
+        description: TOOL_DESCRIPTIONS.search,
         input: {
           type: "object",
           properties: {
@@ -107,25 +81,17 @@ export const MemoryV2 = Plugin.define({
         async execute(args) {
           const a = args as { query: string; scope?: string; limit?: number };
           return {
-            content: await run(() => {
-              const hits = search(getDb(), {
-                query: a.query,
-                scope: a.scope ?? defaultScope,
-                ...(a.limit !== undefined ? { limit: a.limit } : {}),
-              });
-              if (hits.length === 0) {
-                return "no matching memory entries";
-              }
-              return JSON.stringify(hits, null, 2);
-            }),
+            content: ops.search(
+              { query: a.query, ...(a.limit !== undefined ? { limit: a.limit } : {}) },
+              defaultScope(undefined, a.scope ?? ctx.location.directory),
+            ),
           };
         },
       });
 
       editor.add({
         name: "memory_list",
-        description:
-          "List recent memory entries for a scope (default: the project directory), newest first.",
+        description: TOOL_DESCRIPTIONS.list,
         input: {
           type: "object",
           properties: {
@@ -137,23 +103,17 @@ export const MemoryV2 = Plugin.define({
         async execute(args) {
           const a = args as { scope?: string; limit?: number };
           return {
-            content: await run(() => {
-              const entries = list(getDb(), {
-                scope: a.scope ?? defaultScope,
-                ...(a.limit !== undefined ? { limit: a.limit } : {}),
-              });
-              if (entries.length === 0) {
-                return "no memory entries";
-              }
-              return JSON.stringify(entries, null, 2);
-            }),
+            content: ops.list(
+              a.limit !== undefined ? { limit: a.limit } : {},
+              defaultScope(undefined, a.scope ?? ctx.location.directory),
+            ),
           };
         },
       });
 
       editor.add({
         name: "memory_forget",
-        description: "Delete memory entries by id, or all entries matching a query.",
+        description: TOOL_DESCRIPTIONS.forget,
         input: {
           type: "object",
           properties: {
@@ -164,34 +124,34 @@ export const MemoryV2 = Plugin.define({
         },
         async execute(args) {
           const a = args as { id?: string; query?: string };
-          return {
-            content: await run(() => {
-              if (a.id !== undefined) {
-                const deleted = forget(getDb(), { id: a.id });
-                return `deleted ${deleted} entr${deleted === 1 ? "y" : "ies"}`;
-              }
-              if (a.query !== undefined) {
-                const deleted = forget(getDb(), { query: a.query });
-                return `deleted ${deleted} entr${deleted === 1 ? "y" : "ies"}`;
-              }
-              return "provide id or query";
-            }),
-          };
+          return { content: ops.forget(a, defaultScope(undefined, ctx.location.directory)) };
         },
       });
     });
 
-    // experimental.chat.system.transform -> context hook (edit event.system)
+    // The v1 system transform maps to the v2 context hook: guidance first, then the
+    // once-per-session inventory.
     await ctx.session.hook("context", (event) => {
       event.system.push(textPart(SYSTEM_GUIDANCE));
+      const inventory = injected.inject(event.sessionID, () =>
+        memoryInventory(getDb, dbPath, projectScope),
+      );
+      if (inventory !== null) {
+        event.system.push(textPart(inventory));
+      }
     });
 
     // experimental.session.compacting -> compaction hook
     await ctx.session.hook("compaction", (event) => {
       event.system.push(textPart(COMPACTION_CONTEXT));
+      const inventory = memoryInventory(getDb, dbPath, projectScope);
+      if (inventory !== null) {
+        event.system.push(textPart(inventory));
+      }
     });
 
     const cleanup = async () => {
+      injected.reset();
       db?.close();
       db = null;
     };

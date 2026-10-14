@@ -1,15 +1,21 @@
 import type { Hooks, Plugin } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin";
 
 import { openMemoryDb, type MemoryDb } from "./lib/db.js";
-import { forget, list, save, search, SecretDetectedError } from "./lib/store.js";
-import { tool } from "@opencode-ai/plugin";
+import {
+  TOOL_DESCRIPTIONS,
+  createMemoryOps,
+  memoryInventory,
+  oncePerSession,
+} from "./lib/memory-ops.js";
+import { canonicalScope } from "./lib/store.js";
 
 export type PluginOptions = {
   dbPath?: string;
 };
 
 export const SYSTEM_GUIDANCE = `You have persistent working memory shared with all OpenCode sessions on this machine.
-At the start of a non-trivial task, run memory_search for relevant decisions and facts about this project.
+Recent entries are listed above when present; run memory_search for anything older or more specific.
 When you make a durable decision or learn a lasting fact, call memory_save (kinds: decision, fact, preference, gotcha).
 Never store credentials, tokens, or API keys in memory; the store refuses them.`;
 
@@ -25,21 +31,27 @@ export function defaultDbPath(options?: PluginOptions): string {
   return `${dataHome}/opencode-memory/memory.db`;
 }
 
-export const MemoryPlugin: Plugin = async (_input, options?: PluginOptions) => {
-  let db: MemoryDb | null = null;
+/**
+ * Scope of a session: the v1 tool context carries a worktree, so that is the canonical
+ * key. `directory` is the fallback so the same project does not get two scopes.
+ */
+export function defaultScope(worktree?: string, directory?: string): string {
+  return canonicalScope(worktree, directory);
+}
 
-  const getDb = (): MemoryDb => {
-    if (!db) {
-      db = openMemoryDb(defaultDbPath(options));
-    }
-    return db;
-  };
+export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
+  const dbPath = defaultDbPath(options);
+  let db: MemoryDb | null = null;
+  const getDb = (): MemoryDb => (db ??= openMemoryDb(dbPath));
+  const ops = createMemoryOps(getDb);
+  // Request and compaction hooks carry no directory: the instance scope is the project.
+  const projectScope = defaultScope(input.worktree, input.directory);
+  const injected = oncePerSession();
 
   const hooks: Hooks = {
     tool: {
       memory_save: tool({
-        description:
-          "Save a durable entry to shared working memory (decisions, facts, preferences, gotchas). Never store credentials.",
+        description: TOOL_DESCRIPTIONS.save,
         args: {
           kind: tool.schema
             .string()
@@ -53,23 +65,12 @@ export const MemoryPlugin: Plugin = async (_input, options?: PluginOptions) => {
           tags: tool.schema.array(tool.schema.string()).optional().describe("Optional tags"),
           expires_at: tool.schema.number().optional().describe("Optional epoch ms expiry"),
         },
-        execute: (args, context) =>
-          run(() => {
-            const entry = save(getDb(), {
-              scope: args.scope ?? context.worktree,
-              kind: args.kind,
-              title: args.title,
-              body: args.body,
-              tags: args.tags ?? [],
-              expires_at: args.expires_at ?? null,
-            });
-            return `saved ${entry.id} (${entry.scope})`;
-          }),
+        execute: async (args, context) =>
+          ops.save(args, defaultScope(args.scope ?? context.worktree ?? context.directory)),
       }),
 
       memory_search: tool({
-        description:
-          "Search shared working memory (all sessions on this machine). Results include this project's scope and global entries.",
+        description: TOOL_DESCRIPTIONS.search,
         args: {
           query: tool.schema.string().describe("Free-text query"),
           scope: tool.schema
@@ -78,23 +79,15 @@ export const MemoryPlugin: Plugin = async (_input, options?: PluginOptions) => {
             .describe("Scope key; defaults to this session's worktree"),
           limit: tool.schema.number().optional().describe("Max results (default 10)"),
         },
-        execute: (args, context) =>
-          run(() => {
-            const hits = search(getDb(), {
-              query: args.query,
-              scope: args.scope ?? context.worktree,
-              ...(args.limit !== undefined ? { limit: args.limit } : {}),
-            });
-            if (hits.length === 0) {
-              return "no matching memory entries";
-            }
-            return JSON.stringify(hits, null, 2);
-          }),
+        execute: async (args, context) =>
+          ops.search(
+            { query: args.query, ...(args.limit !== undefined ? { limit: args.limit } : {}) },
+            defaultScope(args.scope ?? context.worktree ?? context.directory),
+          ),
       }),
 
       memory_list: tool({
-        description:
-          "List recent memory entries for a scope (default: this session's worktree), newest first.",
+        description: TOOL_DESCRIPTIONS.list,
         args: {
           scope: tool.schema
             .string()
@@ -102,68 +95,47 @@ export const MemoryPlugin: Plugin = async (_input, options?: PluginOptions) => {
             .describe("Scope key; defaults to this session's worktree"),
           limit: tool.schema.number().optional().describe("Max results (default 20)"),
         },
-        execute: (args, context) =>
-          run(() => {
-            const entries = list(getDb(), {
-              scope: args.scope ?? context.worktree,
-              ...(args.limit !== undefined ? { limit: args.limit } : {}),
-            });
-            if (entries.length === 0) {
-              return "no memory entries";
-            }
-            return JSON.stringify(entries, null, 2);
-          }),
+        execute: async (args, context) =>
+          ops.list(
+            args.limit !== undefined ? { limit: args.limit } : {},
+            defaultScope(args.scope ?? context.worktree ?? context.directory),
+          ),
       }),
 
       memory_forget: tool({
-        description: "Delete memory entries by id, or all entries matching a query.",
+        description: TOOL_DESCRIPTIONS.forget,
         args: {
           id: tool.schema.string().optional().describe("Entry id to delete"),
-          query: tool.schema.string().optional().describe("Delete every entry matching this query"),
+          query: tool.schema.string().optional().describe("Delete every entry matching a query"),
         },
-        execute: (args, _context) =>
-          run(() => {
-            if (args.id !== undefined) {
-              const deleted = forget(getDb(), { id: args.id });
-              return `deleted ${deleted} entr${deleted === 1 ? "y" : "ies"}`;
-            }
-            if (args.query !== undefined) {
-              const deleted = forget(getDb(), { query: args.query });
-              return `deleted ${deleted} entr${deleted === 1 ? "y" : "ies"}`;
-            }
-            return "provide id or query";
-          }),
+        execute: async (args, context) =>
+          ops.forget(args, defaultScope(context.worktree, context.directory)),
       }),
     },
   };
 
   return {
     ...hooks,
-    "experimental.chat.system.transform": async (_input, output) => {
+    "experimental.chat.system.transform": async (input, output) => {
       output.system.push(SYSTEM_GUIDANCE);
+      const inventory = injected.inject(input.sessionID, () =>
+        memoryInventory(getDb, dbPath, projectScope),
+      );
+      if (inventory !== null) {
+        output.system.push(inventory);
+      }
     },
     "experimental.session.compacting": async (_input, output) => {
       output.context.push(COMPACTION_CONTEXT);
+      const inventory = memoryInventory(getDb, dbPath, projectScope);
+      if (inventory !== null) {
+        output.context.push(inventory);
+      }
     },
     dispose: async () => {
+      injected.reset();
       db?.close();
       db = null;
     },
   };
 };
-
-// Tool results are shown to the model: caught errors become readable text, so
-// a rejected save is guidance instead of a crashed tool call.
-async function run(fn: () => string): Promise<string> {
-  try {
-    return fn();
-  } catch (error) {
-    if (error instanceof SecretDetectedError) {
-      return "refused: the content looks like a credential; secrets must never be stored in memory";
-    }
-    if (error instanceof Error) {
-      return `error: ${error.message}`;
-    }
-    throw error;
-  }
-}
