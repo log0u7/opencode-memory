@@ -155,13 +155,39 @@ describe("v1 and v2 share one behaviour", () => {
 });
 
 describe("opencode-memory v2 setup", () => {
-  it("registers the four memory tools", async () => {
+  it("registers the five memory tools", async () => {
     const dbPath = tmpDbPath();
     const { ctx, added } = fakeCtx(dbPath);
 
     const cleanup = await pluginModule.setup(ctx);
     const names = added.map((t) => t.name).sort();
-    expect(names).toEqual(["memory_forget", "memory_list", "memory_save", "memory_search"]);
+    expect(names).toEqual([
+      "memory_forget",
+      "memory_list",
+      "memory_save",
+      "memory_search",
+      "memory_stats",
+    ]);
+    await cleanup?.();
+  });
+
+  it("reports counts per kind through memory_stats", async () => {
+    const dbPath = tmpDbPath();
+    const { ctx, added } = fakeCtx(dbPath);
+    const cleanup = await pluginModule.setup(ctx);
+    const byName = new Map(added.map((t) => [t.name, t]));
+
+    const save = byName.get("memory_save");
+    await save?.execute(
+      { kind: "lesson", title: "retry with backoff", body: "b" },
+      { sessionID: "s1" },
+    );
+    await save?.execute({ kind: "fact", title: "port 5432", body: "b" }, { sessionID: "s1" });
+
+    const result = await byName.get("memory_stats")?.execute({}, { sessionID: "s1" });
+    expect(result?.content).toContain("lesson: 1");
+    expect(result?.content).toContain("fact: 1");
+    expect(result?.content).toContain("total: 2");
     await cleanup?.();
   });
 

@@ -162,6 +162,22 @@ export const MemoryV2 = Plugin.define({
           return { content: ops.forget(a, defaultScope(undefined, ctx.location.directory)) };
         },
       });
+
+      editor.add({
+        name: "memory_stats",
+        description: TOOL_DESCRIPTIONS.stats,
+        input: {
+          type: "object",
+          properties: {
+            scope: { type: "string", description: "Scope key; defaults to the project directory" },
+          },
+          additionalProperties: false,
+        },
+        async execute(args) {
+          const a = args as { scope?: string };
+          return { content: ops.stats(defaultScope(undefined, a.scope ?? ctx.location.directory)) };
+        },
+      });
     });
 
     // The v1 system transform maps to the v2 context hook: guidance first, then the

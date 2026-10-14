@@ -8,7 +8,7 @@
 
 Working memory for [OpenCode](https://opencode.ai): a shared SQLite store that all sessions on a machine read and write, so decisions, facts, and compaction summaries survive session boundaries.
 
-Every session gets four tools (`memory_save`, `memory_search`, `memory_list`, `memory_forget`). Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, strict match first with a prefix fallback). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
+Every session gets five tools (`memory_save`, `memory_search`, `memory_list`, `memory_forget`, `memory_stats`). Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, strict match first with a prefix fallback). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
 
 ## Safety limits
 
@@ -48,6 +48,7 @@ memory_save(kind="decision", title="Use WAL mode", body="...", tags=["db"])
 memory_search("postgres migration strategy")
 memory_list()
 memory_forget(id="...")
+memory_stats()
 ```
 
 ### Tools
@@ -58,6 +59,7 @@ memory_forget(id="...")
 | `memory_search` | `query`, `scope?`, `limit?` | FTS5 BM25 search; strict match first, prefix OR fallback when nothing matches. |
 | `memory_list` | `scope?`, `limit?` | Recent entries, newest first. |
 | `memory_forget` | `id` or `query` | Delete one entry by id, or all matching a query. |
+| `memory_stats` | `scope?` | Count entries by kind (plus global) with a total; checks how much memory exists. |
 
 Entry `kind` is free-form; conventions that work well: `decision`, `fact`, `preference`, `gotcha`, `lesson`, `compaction`.
 

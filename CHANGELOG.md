@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (3), `transcriptChars` (8000), `timeoutMs` (60000). Subagent sessions are skipped and the
   run is best-effort: failures are silent.
 
+- New `memory_stats` tool (both hosts): counts entries by kind for the project scope
+  (plus global) with a total, so the model can see how much memory exists, including
+  how many lessons reflection has written, without paging through `memory_list`.
+
 ### Changed
 
 - `pnpm verify` (and therefore CI) now runs the suite with coverage, so the coverage gate
