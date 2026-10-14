@@ -10,12 +10,13 @@ export type ReflectionConfig = {
   model?: string | undefined;
   maxLessons: number;
   transcriptChars: number;
+  timeoutMs: number;
 };
 
 export type ReflectionDeps = {
   isSubagent: (sessionID: string) => Promise<boolean>;
   transcript: (sessionID: string) => Promise<string>;
-  generate: (prompt: string, sessionID: string) => Promise<string>;
+  generate: (prompt: string, sessionID: string, signal: AbortSignal) => Promise<string>;
   saveLesson: (title: string, body: string) => void;
 };
 
@@ -24,6 +25,9 @@ const MAX_LESSONS_CAP = 10;
 const TRANSCRIPT_CHARS_DEFAULT = 8000;
 const TRANSCRIPT_CHARS_MIN = 500;
 const TRANSCRIPT_CHARS_MAX = 50000;
+const TIMEOUT_MS_DEFAULT = 60000;
+const TIMEOUT_MS_MIN = 1000;
+const TIMEOUT_MS_MAX = 600000;
 /** Below this much transcript there is nothing to distill; saves the LLM call. */
 const TRANSCRIPT_MIN_CHARS = 256;
 const MAX_TRACKED = 512;
@@ -32,7 +36,12 @@ export function parseReflectionConfig(raw: unknown): ReflectionConfig | null {
   if (raw === null || typeof raw !== "object" || (raw as { enabled?: unknown }).enabled !== true) {
     return null;
   }
-  const rawConfig = raw as { model?: unknown; maxLessons?: unknown; transcriptChars?: unknown };
+  const rawConfig = raw as {
+    model?: unknown;
+    maxLessons?: unknown;
+    transcriptChars?: unknown;
+    timeoutMs?: unknown;
+  };
   return {
     enabled: true,
     model:
@@ -46,6 +55,7 @@ export function parseReflectionConfig(raw: unknown): ReflectionConfig | null {
       TRANSCRIPT_CHARS_MAX,
       TRANSCRIPT_CHARS_DEFAULT,
     ),
+    timeoutMs: clamp(rawConfig.timeoutMs, TIMEOUT_MS_MIN, TIMEOUT_MS_MAX, TIMEOUT_MS_DEFAULT),
   };
 }
 
@@ -122,7 +132,14 @@ export function createReflection(
         return;
       }
       settled = true;
-      const reply = await deps.generate(distillPrompt(tail, config.maxLessons), sessionID);
+      // Bound the LLM call: a hung provider must not wedge a session forever. The
+      // hosts forward this signal to the SDK, so the abort also unblocks their own
+      // cleanup (the v1 host deletes the ephemeral child session in its `finally`).
+      const reply = await deps.generate(
+        distillPrompt(tail, config.maxLessons),
+        sessionID,
+        AbortSignal.timeout(config.timeoutMs),
+      );
       for (const lesson of parseLessons(reply, config.maxLessons)) {
         deps.saveLesson(lesson.title, lesson.body);
       }

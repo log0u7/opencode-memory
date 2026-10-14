@@ -88,7 +88,7 @@ function reflectionDeps(
       const result = await client.session.messages({ path: { id: sessionID } });
       return transcriptText(result.data ?? [], config.transcriptChars);
     },
-    generate: async (prompt: string, sessionID: string) => {
+    generate: async (prompt: string, sessionID: string, signal: AbortSignal) => {
       const child = await client.session.create({
         body: { parentID: sessionID, title: REFLECTION_SESSION_TITLE },
       });
@@ -104,6 +104,7 @@ function reflectionDeps(
             system: REFLECTION_SYSTEM,
             ...(model ? { model } : {}),
           },
+          signal,
         });
         return (reply.data?.parts ?? [])
           .filter((part) => part.type === "text")
@@ -130,7 +131,16 @@ function modelRef(model?: string | undefined): { providerID: string; modelID: st
 export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
   const dbPath = defaultDbPath(options);
   let db: MemoryDb | null = null;
-  const getDb = (): MemoryDb => (db ??= openMemoryDb(dbPath));
+  let disposed = false;
+  // After dispose the store is closed for good: a late path (tool call, in-flight
+  // reflection) must not silently reopen a connection that nobody closes again.
+  const getDb = (): MemoryDb => {
+    if (disposed) {
+      throw new Error("memory store is closed");
+    }
+    db ??= openMemoryDb(dbPath);
+    return db;
+  };
   const ops = createMemoryOps(getDb);
   // Request and compaction hooks carry no directory: the instance scope is the project.
   const projectScope = defaultScope(input.worktree, input.directory);
@@ -219,6 +229,9 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
     ...hooks,
     "experimental.chat.system.transform": async (input, output) => {
       output.system.push(SYSTEM_GUIDANCE);
+      if (disposed) {
+        return;
+      }
       const inventory = injected.inject(input.sessionID, () =>
         memoryInventory(getDb, dbPath, projectScope),
       );
@@ -228,12 +241,16 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
     },
     "experimental.session.compacting": async (_input, output) => {
       output.context.push(COMPACTION_CONTEXT);
+      if (disposed) {
+        return;
+      }
       const inventory = memoryInventory(getDb, dbPath, projectScope);
       if (inventory !== null) {
         output.context.push(inventory);
       }
     },
     dispose: async () => {
+      disposed = true;
       injected.reset();
       db?.close();
       db = null;

@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `reflection.enabled: true` in the plugin options, the plugin distills at most
   `maxLessons` durable lessons from the bounded session tail with one LLM call per
   session and saves them as lessons. Options: `model` (`"provider/model"`), `maxLessons`
-  (3), `transcriptChars` (8000). Subagent sessions are skipped and the run is
-  best-effort: failures are silent.
+  (3), `transcriptChars` (8000), `timeoutMs` (60000). Subagent sessions are skipped and the
+  run is best-effort: failures are silent.
 
 ### Changed
 
@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reflection.
 - The README safety-limits note on `memory_forget` now matches the code: query deletes
   stay in scope, id deletes are global.
+- Reflection's LLM call is now bounded by a timeout (`reflection.timeoutMs`, default 60s):
+  a hung provider no longer wedges a session forever, and the abort reaches the SDK so the
+  v1 host still deletes its ephemeral child session.
+- The v2 event stream now reconnects with a capped backoff after an error instead of
+  silently ending the reflection loop for good.
+- After `dispose` (v1) or `cleanup` (v2), memory operations no longer reopen the SQLite
+  connection: a late tool call or in-flight reflection returns a readable error instead of
+  leaking a connection that nobody closes again.
 
 ## [0.3.0] - 2026-10-14
 

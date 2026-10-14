@@ -63,6 +63,7 @@ function fakeCtx(
   options: Record<string, unknown> = {},
   fixtures: {
     events?: V2Event[];
+    subscribe?: () => AsyncIterable<V2Event>;
     sessionGet?: () => { parentID?: string };
     context?: () => unknown[];
     generateText?: () => Promise<{ text: string }>;
@@ -95,12 +96,14 @@ function fakeCtx(
     },
     generate: { text: vi.fn(fixtures.generateText ?? (async () => ({ text: "[]" }))) },
     event: {
-      subscribe: vi.fn(() =>
-        (async function* () {
-          for (const event of fixtures.events ?? []) {
-            yield event;
-          }
-        })(),
+      subscribe: vi.fn(
+        fixtures.subscribe ??
+          (() =>
+            (async function* () {
+              for (const event of fixtures.events ?? []) {
+                yield event;
+              }
+            })()),
       ),
     },
   } as unknown as Plugin.Context;
@@ -477,5 +480,90 @@ describe("opencode-memory v2 setup", () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(ctx.generate.text).not.toHaveBeenCalled();
     await cleanup?.();
+  });
+
+  it("reconnects the event stream after it throws", async () => {
+    const dbPath = tmpDbPath();
+    const line =
+      "migrate the postgres tables tonight; the script is scripts/migrate.ts and the first attempt fired one giant UPDATE";
+    let calls = 0;
+    const subscribe = () =>
+      (async function* () {
+        calls += 1;
+        if (calls === 1) {
+          throw new Error("stream reset");
+        }
+        yield { type: "session.idle", data: { sessionID: "s1" } };
+      })();
+    const { ctx } = fakeCtx(
+      dbPath,
+      { reflection: { enabled: true } },
+      {
+        subscribe,
+        sessionGet: () => ({}),
+        context: () => [
+          { type: "user", text: line },
+          {
+            type: "assistant",
+            content: [
+              {
+                type: "text",
+                text: `${line} and it hit lock contention; batching by 1000 rows avoided it and the cleanup query finished clean`,
+              },
+            ],
+          },
+        ],
+        generateText: () =>
+          Promise.resolve({
+            text: '[{"title":"batch updates","body":"batching by 1000 avoided lock contention"}]',
+          }),
+      },
+    );
+    const cleanup = await pluginModule.setup(ctx);
+
+    const db = openMemoryDb(dbPath);
+    await vi.waitFor(
+      () => {
+        expect(
+          list(db, { scope: "/home/u/project" }).some(
+            (e) => e.kind === "lesson" && e.title === "batch updates",
+          ),
+        ).toBe(true);
+      },
+      { timeout: 3000 },
+    );
+    db.close();
+    await cleanup?.();
+    expect(ctx.event.subscribe).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not reopen the store after cleanup", async () => {
+    const dbPath = tmpDbPath();
+    const { ctx, added, sessionHooks } = fakeCtx(dbPath);
+    const cleanup = await pluginModule.setup(ctx);
+    const save = added.find((t) => t.name === "memory_save");
+
+    await save?.execute({ kind: "fact", title: "before", body: "x" }, { sessionID: "s1" });
+
+    const before = { system: [] as Array<{ type: string; text: string }>, messages: [] };
+    sessionHooks.get("context")?.(before);
+    expect(before.system).toHaveLength(2);
+
+    await cleanup?.();
+    for (const suffix of ["", "-wal", "-shm"]) {
+      rmSync(`${dbPath}${suffix}`, { force: true });
+    }
+
+    const out = await save?.execute(
+      { kind: "fact", title: "after", body: "y" },
+      { sessionID: "s1" },
+    );
+    expect(out?.content).toContain("error:");
+    expect(existsSync(dbPath)).toBe(false);
+
+    const event = { system: [] as Array<{ type: string; text: string }>, messages: [] };
+    expect(() => sessionHooks.get("context")?.(event)).not.toThrow();
+    expect(event.system).toHaveLength(1);
+    expect(existsSync(dbPath)).toBe(false);
   });
 });
