@@ -18,6 +18,10 @@ import {
 
 const textPart = (text: string) => ({ type: "text" as const, text });
 
+/** Reconnect backoff for the v2 event stream: short first retry, capped growth. */
+const RECONNECT_MIN_MS = 250;
+const RECONNECT_MAX_MS = 5000;
+
 /** Session tail as plain text: user messages verbatim, assistant text parts joined. */
 async function transcriptV2(ctx: Plugin.Context, sessionID: string): Promise<string> {
   const messages = await ctx.session.context({ sessionID });
@@ -45,7 +49,16 @@ export const MemoryV2 = Plugin.define({
     const options = ctx.options as PluginOptions;
     const dbPath = defaultDbPath(options);
     let db: MemoryDb | null = null;
-    const getDb = (): MemoryDb => (db ??= openMemoryDb(dbPath));
+    let disposed = false;
+    // After cleanup the store is closed for good: a late path (tool call, in-flight
+    // reflection) must not silently reopen a connection that nobody closes again.
+    const getDb = (): MemoryDb => {
+      if (disposed) {
+        throw new Error("memory store is closed");
+      }
+      db ??= openMemoryDb(dbPath);
+      return db;
+    };
     const ops = createMemoryOps(getDb);
 
     // Request and compaction hooks carry no directory: the instance scope is the project.
@@ -173,6 +186,7 @@ export const MemoryV2 = Plugin.define({
     });
 
     const cleanup = async () => {
+      disposed = true;
       injected.reset();
       db?.close();
       db = null;
@@ -188,9 +202,9 @@ export const MemoryV2 = Plugin.define({
         return !!session.parentID;
       },
       transcript: (sessionID) => transcriptV2(ctx, sessionID),
-      generate: async (prompt) => {
+      generate: async (prompt, _sessionID, signal) => {
         const model = modelRefV2(reflection.model);
-        const result = await ctx.generate.text({ prompt, ...(model ? { model } : {}) });
+        const result = await ctx.generate.text({ prompt, ...(model ? { model } : {}) }, { signal });
         return result.text;
       },
       saveLesson: (title, body) => {
@@ -198,15 +212,29 @@ export const MemoryV2 = Plugin.define({
       },
     });
     // The host keeps the event stream alive through this controller; aborting it stops
-    // the idle loop without touching the tool or session hooks.
+    // the idle loop without touching the tool or session hooks. A stream that errors is
+    // retried with a capped backoff instead of ending the loop for good.
     const controller = new AbortController();
     void (async () => {
-      for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
-        if (event.type === "session.idle") {
-          onIdle(event.data.sessionID);
+      let delay = RECONNECT_MIN_MS;
+      while (!controller.signal.aborted) {
+        let failed = false;
+        try {
+          for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+            if (event.type === "session.idle") {
+              onIdle(event.data.sessionID);
+            }
+          }
+        } catch {
+          failed = true;
         }
+        if (!failed || controller.signal.aborted) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay = Math.min(delay * 2, RECONNECT_MAX_MS);
       }
-    })().catch(() => {});
+    })();
     return async () => {
       controller.abort();
       await cleanup();

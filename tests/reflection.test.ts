@@ -31,7 +31,13 @@ function deps(
 }
 
 function enabled(overrides: Record<string, unknown> = {}) {
-  return { enabled: true, maxLessons: 3, transcriptChars: 8000, ...overrides };
+  return {
+    enabled: true,
+    maxLessons: 3,
+    transcriptChars: 8000,
+    timeoutMs: 60000,
+    ...overrides,
+  };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -49,18 +55,21 @@ describe("parseReflectionConfig", () => {
       model: "zhip/glm",
       maxLessons: 99,
       transcriptChars: 1,
+      timeoutMs: 1,
     });
     expect(config).toEqual({
       enabled: true,
       model: "zhip/glm",
       maxLessons: 10,
       transcriptChars: 500,
+      timeoutMs: 1000,
     });
     expect(parseReflectionConfig({ enabled: true })).toEqual({
       enabled: true,
       model: undefined,
       maxLessons: 3,
       transcriptChars: 8000,
+      timeoutMs: 60000,
     });
   });
 });
@@ -111,7 +120,10 @@ describe("distillPrompt", () => {
 describe("createReflection", () => {
   it("does nothing when disabled", async () => {
     const d = deps();
-    const onIdle = createReflection({ enabled: false, maxLessons: 3, transcriptChars: 8000 }, d);
+    const onIdle = createReflection(
+      { enabled: false, maxLessons: 3, transcriptChars: 8000, timeoutMs: 60000 },
+      d,
+    );
     onIdle("s1");
     await flush();
     expect(d.generate).not.toHaveBeenCalled();
@@ -127,7 +139,7 @@ describe("createReflection", () => {
       "batch first",
       "batching by 1000 avoided lock contention",
     );
-    expect(d.generate).toHaveBeenCalledWith(expect.any(String), "s1");
+    expect(d.generate).toHaveBeenCalledWith(expect.any(String), "s1", expect.any(AbortSignal));
   });
 
   it("reflects at most once per session", async () => {
@@ -231,6 +243,40 @@ describe("createReflection", () => {
     const onIdle = createReflection(enabled(), d);
     onIdle("s1");
     await vi.waitFor(() => expect(d.generate).toHaveBeenCalledTimes(1));
+    onIdle("s1");
+    await flush();
+    expect(d.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds the generate call with a timeout signal", async () => {
+    let captured: AbortSignal | undefined;
+    const d = deps({
+      generate: vi.fn((_prompt: string, _sid: string, signal: AbortSignal) => {
+        captured = signal;
+        return new Promise<string>((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(new Error("timeout"))),
+        );
+      }),
+    });
+    const onIdle = createReflection(enabled({ timeoutMs: 20 }), d);
+    onIdle("s1");
+    await vi.waitFor(() => expect(captured).toBeDefined());
+    await vi.waitFor(() => expect(captured?.aborted).toBe(true), { timeout: 1000 });
+  });
+
+  it("settles a session whose generate times out, so it is not retried", async () => {
+    const d = deps({
+      generate: vi.fn(
+        (_prompt: string, _sid: string, signal: AbortSignal) =>
+          new Promise<string>((_resolve, reject) =>
+            signal.addEventListener("abort", () => reject(new Error("timeout"))),
+          ),
+      ),
+    });
+    const onIdle = createReflection(enabled({ timeoutMs: 20 }), d);
+    onIdle("s1");
+    await vi.waitFor(() => expect(d.generate).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     onIdle("s1");
     await flush();
     expect(d.generate).toHaveBeenCalledTimes(1);

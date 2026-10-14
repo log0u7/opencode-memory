@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -53,7 +53,7 @@ function fakeInput(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function reflectionClient() {
+function reflectionClient(promptImpl?: unknown) {
   return {
     session: {
       get: vi.fn(async () => ({ data: { id: "s1" } })),
@@ -84,16 +84,18 @@ function reflectionClient() {
         ],
       })),
       create: vi.fn(async () => ({ data: { id: "child1", parentID: "s1" } })),
-      prompt: vi.fn(async () => ({
-        data: {
-          parts: [
-            {
-              type: "text",
-              text: '[{"title":"batch updates","body":"batching by 1000 avoided lock contention"}]',
-            },
-          ],
-        },
-      })),
+      prompt:
+        promptImpl ??
+        vi.fn(async () => ({
+          data: {
+            parts: [
+              {
+                type: "text",
+                text: '[{"title":"batch updates","body":"batching by 1000 avoided lock contention"}]',
+              },
+            ],
+          },
+        })),
       delete: vi.fn(async () => ({ data: undefined })),
     },
   };
@@ -230,6 +232,24 @@ describe("memory plugin remaining branches", () => {
     await hooks.dispose?.();
     await expect(hooks.dispose?.()).resolves.toBeUndefined();
   });
+
+  it("does not reopen the store after dispose", async () => {
+    const dbPath = join(dir, "closed.db");
+    const hooks = await MemoryPlugin(fakeInput(), { dbPath });
+    const tools = hooks.tool ?? {};
+    await tools.memory_save?.execute({ kind: "fact", title: "before", body: "x" }, ctx());
+    await hooks.dispose?.();
+    for (const suffix of ["", "-wal", "-shm"]) {
+      rmSync(`${dbPath}${suffix}`, { force: true });
+    }
+
+    const result = await tools.memory_save?.execute(
+      { kind: "fact", title: "after", body: "y" },
+      ctx(),
+    );
+    expect(result).toContain("error:");
+    expect(existsSync(dbPath)).toBe(false);
+  });
 });
 
 describe("memory plugin empty results", () => {
@@ -273,6 +293,37 @@ describe("memory plugin reflection", () => {
 
     expect(client.session.create).toHaveBeenCalled();
     expect(client.session.delete).toHaveBeenCalledWith({ path: { id: "child1" } });
+  });
+
+  it("aborts a hanging reflection call and still deletes the child session", async () => {
+    const dbPath = join(dir, "r3.db");
+    const signals: AbortSignal[] = [];
+    const prompt = vi.fn(
+      (options: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          if (!options.signal) {
+            return;
+          }
+          signals.push(options.signal);
+          options.signal.addEventListener("abort", () => reject(new Error("timeout")));
+        }),
+    );
+    const client = reflectionClient(prompt);
+    const hooks = await MemoryPlugin(fakeInput({ client: client as never }), {
+      dbPath,
+      reflection: { enabled: true, timeoutMs: 1000 },
+    });
+
+    await hooks.event?.({
+      event: { type: "session.idle", properties: { sessionID: "s1" } } as never,
+    });
+
+    await vi.waitFor(
+      () => expect(client.session.delete).toHaveBeenCalledWith({ path: { id: "child1" } }),
+      { timeout: 3000 },
+    );
+    expect(client.session.create).toHaveBeenCalled();
+    expect(signals[0]?.aborted).toBe(true);
   });
 
   it("ignores non-idle events", async () => {
