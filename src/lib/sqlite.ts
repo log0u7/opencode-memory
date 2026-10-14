@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+
 export interface SqliteConn {
   all<T = unknown>(sql: string, params?: unknown[]): T[];
   get<T = unknown>(sql: string, params?: unknown[]): T | null;
@@ -82,11 +84,13 @@ export function openSqlite(path: string): SqliteConn {
     return createBunConn(new globalRuntime.Bun.sqlite.Database(path));
   }
 
-  // node:sqlite ships with Node >= 22.5; require keeps non-node runtimes from
-  // failing at module load and gives tests a clear error if the engine is absent.
-  const { DatabaseSync } = require("node:sqlite") as NodeSqliteExports;
+  // node:sqlite ships with Node >= 22.5. createRequire keeps the load lazy for
+  // runtimes without node:sqlite: a bare require is not defined in an ES module.
+  const { DatabaseSync } = nodeRequire("node:sqlite") as NodeSqliteExports;
   return createPreparedConn(new DatabaseSync(path));
 }
+
+const nodeRequire = createRequire(import.meta.url);
 
 interface NodeSqliteExports {
   DatabaseSync: new (path: string) => NodeSqliteDatabase;

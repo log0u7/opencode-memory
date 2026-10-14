@@ -18,6 +18,30 @@ afterEach(() => {
 
 // The Bun runtime branch of the adapter is exercised with a stub: it only has
 // to honor the four operations the SqliteConn wrapper forwards.
+describe("openSqlite (node runtime branch)", () => {
+  // A bare `require` is undefined inside an ES module, which is how the built plugin
+  // is loaded: this guards the adapter against that regression.
+  it("opens a real node:sqlite connection and round-trips a row", () => {
+    const globalRuntime = globalThis as { Bun?: unknown };
+    const original = globalRuntime.Bun;
+    delete globalRuntime.Bun;
+
+    try {
+      const conn = openSqlite(join(dir, "node.db"));
+      conn.exec("CREATE TABLE t (a TEXT)");
+      conn.run("INSERT INTO t VALUES (?)", ["x"]);
+
+      expect(conn.all<{ a: string }>("SELECT a FROM t")).toEqual([{ a: "x" }]);
+      expect(conn.get<{ a: string }>("SELECT a FROM t")?.a).toBe("x");
+      conn.close();
+    } finally {
+      if (original !== undefined) {
+        globalRuntime.Bun = original;
+      }
+    }
+  });
+});
+
 class FakeBunDatabase {
   private statements = new Map<string, unknown[]>();
 
