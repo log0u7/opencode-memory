@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -40,10 +40,13 @@ describe("openMemoryDb", () => {
     () => {
       const file = join(dir, "nested", "memory.db");
       const db = openMemoryDb(file);
-      db.close();
 
       expect(statSync(file).mode & 0o777).toBe(0o600);
       expect(statSync(join(dir, "nested")).mode & 0o777).toBe(0o700);
+      for (const suffix of ["-wal", "-shm"]) {
+        expect(statSync(`${file}${suffix}`).mode & 0o777).toBe(0o600);
+      }
+      db.close();
     },
   );
 
@@ -59,6 +62,20 @@ describe("openMemoryDb", () => {
       reopened.close();
 
       expect(statSync(file).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "leaves a directory it did not create to its owner",
+    () => {
+      const parent = join(dir, "shared");
+      mkdirSync(parent, 0o755);
+      const file = join(parent, "memory.db");
+      const db = openMemoryDb(file);
+      db.close();
+
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+      expect(statSync(parent).mode & 0o777).toBe(0o755);
     },
   );
 

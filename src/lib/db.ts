@@ -40,6 +40,8 @@ CREATE INDEX IF NOT EXISTS entries_scope_title ON entries(scope, lower(trim(titl
 // SECURITY.md promises restrictive permissions whatever the user's umask is, so the
 // directory and files are mode-enforced explicitly instead of left to the umask.
 // POSIX only: chmodSync on Windows flips a read-only bit, which would corrupt usage.
+// Directories the plugin did not create are left to their owner: the db file is
+// 0600 anyway, so a loose parent only leaks file names.
 const POSIX = process.platform !== "win32";
 
 export function openMemoryDb(path: string): MemoryDb {
@@ -58,8 +60,12 @@ export function openMemoryDb(path: string): MemoryDb {
     for (const suffix of ["-wal", "-shm"]) {
       try {
         chmodSync(`${path}${suffix}`, 0o600);
-      } catch {
-        // Not written yet (or already checkpointed away): nothing to tighten.
+      } catch (error) {
+        // Only tolerate a sidecar that is not written yet (or already
+        // checkpointed away); anything else is a real failure.
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
       }
     }
   }

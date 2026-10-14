@@ -28,9 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The store database is created with restrictive permissions (file `0600`, directory
-  `0700`) regardless of the process umask, as `SECURITY.md` already promised; databases
-  created earlier with a permissive umask are tightened on the next open.
+- The store database is created with restrictive permissions: the file is `0600`
+  (enforced on every open, regardless of the process umask, so databases created earlier
+  with a permissive umask are tightened too) and the directory is `0700` when the plugin
+  creates it, as `SECURITY.md` already promised.
 - Secret detection now also refuses JWTs, PEM private key blocks, AWS access key ids,
   GitLab personal access tokens, Google API keys, and Slack user/app tokens, in addition
   to the existing OpenAI, GitHub, and Slack bot formats.
