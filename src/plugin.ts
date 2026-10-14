@@ -229,6 +229,9 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
     ...hooks,
     "experimental.chat.system.transform": async (input, output) => {
       output.system.push(SYSTEM_GUIDANCE);
+      if (disposed) {
+        return;
+      }
       const inventory = injected.inject(input.sessionID, () =>
         memoryInventory(getDb, dbPath, projectScope),
       );
@@ -238,6 +241,9 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
     },
     "experimental.session.compacting": async (_input, output) => {
       output.context.push(COMPACTION_CONTEXT);
+      if (disposed) {
+        return;
+      }
       const inventory = memoryInventory(getDb, dbPath, projectScope);
       if (inventory !== null) {
         output.context.push(inventory);

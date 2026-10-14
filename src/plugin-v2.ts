@@ -168,6 +168,9 @@ export const MemoryV2 = Plugin.define({
     // once-per-session inventory.
     await ctx.session.hook("context", (event) => {
       event.system.push(textPart(SYSTEM_GUIDANCE));
+      if (disposed) {
+        return;
+      }
       const inventory = injected.inject(event.sessionID, () =>
         memoryInventory(getDb, dbPath, projectScope),
       );
@@ -179,6 +182,9 @@ export const MemoryV2 = Plugin.define({
     // experimental.session.compacting -> compaction hook
     await ctx.session.hook("compaction", (event) => {
       event.system.push(textPart(COMPACTION_CONTEXT));
+      if (disposed) {
+        return;
+      }
       const inventory = memoryInventory(getDb, dbPath, projectScope);
       if (inventory !== null) {
         event.system.push(textPart(inventory));

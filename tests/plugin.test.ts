@@ -238,6 +238,14 @@ describe("memory plugin remaining branches", () => {
     const hooks = await MemoryPlugin(fakeInput(), { dbPath });
     const tools = hooks.tool ?? {};
     await tools.memory_save?.execute({ kind: "fact", title: "before", body: "x" }, ctx());
+
+    const before = { system: [] as string[] };
+    await hooks["experimental.chat.system.transform"]?.(
+      { sessionID: "s1" } as never,
+      before as never,
+    );
+    expect(before.system).toHaveLength(2);
+
     await hooks.dispose?.();
     for (const suffix of ["", "-wal", "-shm"]) {
       rmSync(`${dbPath}${suffix}`, { force: true });
@@ -248,6 +256,14 @@ describe("memory plugin remaining branches", () => {
       ctx(),
     );
     expect(result).toContain("error:");
+    expect(existsSync(dbPath)).toBe(false);
+
+    const output = { system: [] as string[] };
+    await hooks["experimental.chat.system.transform"]?.(
+      { sessionID: "s1" } as never,
+      output as never,
+    );
+    expect(output.system).toHaveLength(1);
     expect(existsSync(dbPath)).toBe(false);
   });
 });

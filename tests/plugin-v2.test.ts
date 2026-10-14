@@ -539,11 +539,16 @@ describe("opencode-memory v2 setup", () => {
 
   it("does not reopen the store after cleanup", async () => {
     const dbPath = tmpDbPath();
-    const { ctx, added } = fakeCtx(dbPath);
+    const { ctx, added, sessionHooks } = fakeCtx(dbPath);
     const cleanup = await pluginModule.setup(ctx);
     const save = added.find((t) => t.name === "memory_save");
 
     await save?.execute({ kind: "fact", title: "before", body: "x" }, { sessionID: "s1" });
+
+    const before = { system: [] as Array<{ type: string; text: string }>, messages: [] };
+    sessionHooks.get("context")?.(before);
+    expect(before.system).toHaveLength(2);
+
     await cleanup?.();
     for (const suffix of ["", "-wal", "-shm"]) {
       rmSync(`${dbPath}${suffix}`, { force: true });
@@ -554,6 +559,11 @@ describe("opencode-memory v2 setup", () => {
       { sessionID: "s1" },
     );
     expect(out?.content).toContain("error:");
+    expect(existsSync(dbPath)).toBe(false);
+
+    const event = { system: [] as Array<{ type: string; text: string }>, messages: [] };
+    expect(() => sessionHooks.get("context")?.(event)).not.toThrow();
+    expect(event.system).toHaveLength(1);
     expect(existsSync(dbPath)).toBe(false);
   });
 });
