@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Dev-dependency bumps from the Dependabot minor-and-patch group: `@biomejs/biome`
+  2.5.15, `@opencode-ai/plugin` 1.18.35 (with the transitive `@opencode-ai/sdk` 1.18.35),
+  `lefthook` 2.1.17, and in-range lockfile refreshes (vitest 5.0.3, `@types/node` 26.6.4).
+
 ## [0.4.0] - 2026-10-14
 
 ### Added
