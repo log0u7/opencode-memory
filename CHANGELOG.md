@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Lesson feedback loop: the system guidance and the compaction prompt now nudge the agent
+  to save reusable lessons (`kind=lesson`), and lessons are injected first in later
+  sessions' inventory, ahead of recency noise (`store.list` gained an optional `kind`
+  filter).
+- Optional LLM reflection at `session.idle`, off by default: with
+  `reflection.enabled: true` in the plugin options, the plugin distills at most
+  `maxLessons` durable lessons from the bounded session tail with one LLM call per
+  session and saves them as lessons. Options: `model` (`"provider/model"`), `maxLessons`
+  (3), `transcriptChars` (8000). Subagent sessions are skipped and the run is
+  best-effort: failures are silent.
+
 ## [0.3.0] - 2026-10-14
 
 ### Added

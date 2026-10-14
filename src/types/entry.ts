@@ -1,4 +1,4 @@
-// Entry kind is free-form; common conventions: decision, fact, preference, gotcha, compaction.
+// Entry kind is free-form; common conventions: decision, fact, preference, gotcha, lesson, compaction.
 export type EntryKind = string;
 
 export type Entry = {

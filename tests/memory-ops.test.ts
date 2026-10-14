@@ -140,4 +140,29 @@ describe("memory inventory", () => {
     expect((inventory as string).length).toBeLessThanOrEqual(INVENTORY_MAX_CHARS);
     close();
   });
+
+  it("lists lessons before more recent non-lesson entries, without duplicates", () => {
+    const { ops, dbPath, getDb, close } = store();
+    ops.save({ kind: "lesson", title: "old lesson: retry with batch", body: "x" }, "/w");
+    for (let i = 0; i < 40; i++) {
+      ops.save({ kind: "fact", title: `noise note ${i}`, body: "x" }, "/w");
+    }
+    ops.save({ kind: "lesson", title: "new lesson: check first", body: "x" }, "/w");
+
+    const inventory = memoryInventory(getDb, dbPath, "/w") as string;
+    expect(inventory.indexOf("new lesson")).toBeLessThan(inventory.indexOf("noise note 39"));
+    expect(inventory.indexOf("old lesson")).toBeLessThan(inventory.indexOf("noise note 39"));
+    expect(inventory.indexOf("new lesson")).toBeLessThan(inventory.indexOf("old lesson"));
+    expect(inventory.match(/new lesson/g)).toHaveLength(1);
+    close();
+  });
+
+  it("announces lessons first in the header", () => {
+    const { ops, dbPath, getDb, close } = store();
+    ops.save({ kind: "lesson", title: "a lesson", body: "x" }, "/w");
+
+    const inventory = memoryInventory(getDb, dbPath, "/w") as string;
+    expect(inventory).toMatch(/lessons first/i);
+    close();
+  });
 });
