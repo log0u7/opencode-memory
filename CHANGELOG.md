@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CONTRIBUTING.md states the merge-policy rationale instead of a solo-maintainer
+  preference: `--no-ff` keeps one merge commit per PR, which reads as the PR list via
+  `git log --merges --first-parent main` and is a single atomic revert unit, with a
+  five-commit PR ceiling bounding the cost. Documentation only, no package change.
+
 ## [0.2.0] - 2026-10-12
 
 ### Added
