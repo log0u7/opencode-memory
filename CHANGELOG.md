@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The store database is created with restrictive permissions (file `0600`, directory
+  `0700`) regardless of the process umask, as `SECURITY.md` already promised; databases
+  created earlier with a permissive umask are tightened on the next open.
+- Secret detection now also refuses JWTs, PEM private key blocks, AWS access key ids,
+  GitLab personal access tokens, Google API keys, and Slack user/app tokens, in addition
+  to the existing OpenAI, GitHub, and Slack bot formats.
 - `memory_forget` by id now deletes across scopes: ids are globally unique, so an exact
   id match is precise anywhere, and closed worktrees stay cleanable from any project.
   Query deletes keep the scope lock (a fuzzy match must never silently hit other

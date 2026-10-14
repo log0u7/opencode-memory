@@ -63,6 +63,45 @@ describe("store.save", () => {
     expect(() =>
       save(db, input({ body: "token ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })),
     ).toThrow();
+    expect(() => save(db, input({ body: "aws key AKIAABCDEFGHIJKLMNOP in notes" }))).toThrow(
+      SecretDetectedError,
+    );
+    expect(() => save(db, input({ body: "gitlab token glpat-abcdefghijklmnopqrst" }))).toThrow(
+      SecretDetectedError,
+    );
+    expect(() =>
+      save(db, input({ body: "gcp key AIza0123456789abcdefghijklmnopqrstuvwxy here" })),
+    ).toThrow(SecretDetectedError);
+    expect(() => save(db, input({ body: "slack token xoxp-1234567890123-123456789" }))).toThrow(
+      SecretDetectedError,
+    );
+    expect(() =>
+      save(
+        db,
+        input({
+          body: "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+        }),
+      ),
+    ).toThrow(SecretDetectedError);
+    expect(() =>
+      save(db, input({ body: "pem:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEpA..." })),
+    ).toThrow(SecretDetectedError);
+    db.close();
+  });
+
+  it("accepts normal prose that merely mentions secrets", () => {
+    const db = openMemoryDb(":memory:");
+    expect(() =>
+      save(
+        db,
+        input({
+          body: "we rotated the password on the staging database; the api key lives in the vault, ask ops for access",
+        }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      save(db, input({ body: "the docs mention sk- keys and AKIA ids as examples of formats" })),
+    ).not.toThrow();
     db.close();
   });
 

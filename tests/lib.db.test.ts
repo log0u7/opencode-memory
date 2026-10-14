@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -34,6 +34,33 @@ describe("openMemoryDb", () => {
 
     db.close();
   });
+
+  it.skipIf(process.platform === "win32")(
+    "creates the store file and its directory with restrictive permissions",
+    () => {
+      const file = join(dir, "nested", "memory.db");
+      const db = openMemoryDb(file);
+      db.close();
+
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+      expect(statSync(join(dir, "nested")).mode & 0o777).toBe(0o700);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "tightens an existing store created with loose permissions",
+    () => {
+      const file = join(dir, "memory.db");
+      const db = openMemoryDb(file);
+      db.close();
+      chmodSync(file, 0o666);
+
+      const reopened = openMemoryDb(file);
+      reopened.close();
+
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it("keeps the FTS index in sync through triggers", () => {
     const db = openMemoryDb(join(dir, "memory.db"));
