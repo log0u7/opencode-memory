@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-10-14
 
 ### Added
 
@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preference: `--no-ff` keeps one merge commit per PR, which reads as the PR list via
   `git log --merges --first-parent main` and is a single atomic revert unit, with a
   five-commit PR ceiling bounding the cost. Documentation only, no package change.
+- `memory_save` rewrites an entry that repeats a scope and title instead of adding a
+  duplicate, which stopped the store from growing with every compaction.
+- Saving purges rows past their `expires_at` instead of only hiding them at query time.
 
 ### Fixed
 
@@ -45,24 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The two plugin entry points defaulted to different scopes for the same project (v1 used
   the session worktree, v2 the plugin directory) and disagreed about trailing slashes.
   Both now derive one canonical scope key.
-
-### Fixed (build)
-
 - The published package could not be loaded by a Node host: `src/lib/sqlite.ts` called a
   bare `require("node:sqlite")`, which is undefined in an ES module. The Node branch now
   uses `createRequire(import.meta.url)`.
-
-### Changed
-
-- `memory_save` rewrites an entry that repeats a scope and title instead of adding a
-  duplicate, which stopped the store from growing with every compaction.
-- Saving purges rows past their `expires_at` instead of only hiding them at query time.
 
 ### Removed
 
 - README advertised an FTS5 "recency boost" that the code never implemented; the actual
   ranking (BM25, newest first on ties) is documented instead.
->>>>>>> f9f2078 (feat: memory injection, compaction inventory and store hardening)
 
 ## [0.2.0] - 2026-10-12
 
