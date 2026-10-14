@@ -2,9 +2,10 @@ import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MemoryPlugin } from "../src/plugin.js";
+import { list } from "../src/lib/store.js";
 import { MAX_LIMIT } from "../src/lib/store.js";
 import type { ToolContext } from "@opencode-ai/plugin";
 
@@ -39,7 +40,7 @@ async function loadTools(options: Record<string, unknown> = {}) {
   return hooks.tool ?? {};
 }
 
-function fakeInput() {
+function fakeInput(overrides: Record<string, unknown> = {}) {
   return {
     client: {} as never,
     project: { id: "p1" } as never,
@@ -48,6 +49,53 @@ function fakeInput() {
     experimental_workspace: {} as never,
     serverUrl: new URL("http://localhost:4096"),
     $: (() => Promise.resolve()) as never,
+    ...overrides,
+  };
+}
+
+function reflectionClient() {
+  return {
+    session: {
+      get: vi.fn(async () => ({ data: { id: "s1" } })),
+      messages: vi.fn(async () => ({
+        data: [
+          {
+            info: { role: "user" },
+            parts: [
+              {
+                type: "text",
+                text: "migrate the postgres tables tonight, the migration script is scripts/migrate.ts",
+              },
+              {
+                type: "text",
+                text: "the first attempt fired one giant UPDATE and hit lock contention for forty seconds",
+              },
+            ],
+          },
+          {
+            info: { role: "assistant" },
+            parts: [
+              {
+                type: "text",
+                text: "batching by 1000 rows avoided the contention; applied the same batch size to the cleanup query and the run finished clean",
+              },
+            ],
+          },
+        ],
+      })),
+      create: vi.fn(async () => ({ data: { id: "child1", parentID: "s1" } })),
+      prompt: vi.fn(async () => ({
+        data: {
+          parts: [
+            {
+              type: "text",
+              text: '[{"title":"batch updates","body":"batching by 1000 avoided lock contention"}]',
+            },
+          ],
+        },
+      })),
+      delete: vi.fn(async () => ({ data: undefined })),
+    },
   };
 }
 
@@ -191,5 +239,52 @@ describe("memory plugin empty results", () => {
       "no matching memory entries",
     );
     expect(await tools.memory_list?.execute({}, ctx())).toBe("no memory entries");
+  });
+});
+
+describe("memory plugin reflection", () => {
+  it("wires no event hook when reflection is disabled", async () => {
+    const hooks = await MemoryPlugin(fakeInput(), { dbPath: join(dir, "r0.db") });
+    expect(hooks.event).toBeUndefined();
+  });
+
+  it("distills a session tail into lessons on session.idle", async () => {
+    const dbPath = join(dir, "r1.db");
+    const client = reflectionClient();
+    const hooks = await MemoryPlugin(fakeInput({ client: client as never }), {
+      dbPath,
+      reflection: { enabled: true },
+    });
+    const event = hooks.event;
+    expect(event).toBeDefined();
+
+    await event?.({ event: { type: "session.idle", properties: { sessionID: "s1" } } as never });
+
+    const { openMemoryDb } = await import("../src/lib/db.js");
+    const db = openMemoryDb(dbPath);
+    await vi.waitFor(() => {
+      expect(
+        list(db, { scope: WORKTREE }).some(
+          (e) => e.kind === "lesson" && e.title === "batch updates",
+        ),
+      ).toBe(true);
+    });
+    db.close();
+
+    expect(client.session.create).toHaveBeenCalled();
+    expect(client.session.delete).toHaveBeenCalledWith({ path: { id: "child1" } });
+  });
+
+  it("ignores non-idle events", async () => {
+    const client = reflectionClient();
+    const hooks = await MemoryPlugin(fakeInput({ client: client as never }), {
+      dbPath: join(dir, "r2.db"),
+      reflection: { enabled: true },
+    });
+    await hooks.event?.({
+      event: { type: "session.status", properties: { sessionID: "s1" } } as never,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(client.session.create).not.toHaveBeenCalled();
   });
 });

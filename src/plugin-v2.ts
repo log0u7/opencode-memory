@@ -8,6 +8,11 @@ import {
   oncePerSession,
 } from "./lib/memory-ops.js";
 import {
+  createReflection,
+  parseReflectionConfig,
+  type ReflectionConfig,
+} from "./lib/reflection.js";
+import {
   SYSTEM_GUIDANCE,
   COMPACTION_CONTEXT,
   defaultScope,
@@ -16,6 +21,27 @@ import {
 } from "./plugin.js";
 
 const textPart = (text: string) => ({ type: "text" as const, text });
+
+/** Session tail as plain text: user messages verbatim, assistant text parts joined. */
+async function transcriptV2(ctx: Plugin.Context, sessionID: string): Promise<string> {
+  const messages = await ctx.session.context({ sessionID });
+  const lines: string[] = [];
+  for (const message of messages) {
+    if (message.type === "user") {
+      lines.push(`user: ${message.text}`);
+    } else if (message.type === "assistant") {
+      const text = message.content
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join(" ")
+        .trim();
+      if (text) {
+        lines.push(`assistant: ${text}`);
+      }
+    }
+  }
+  return lines.join("\n");
+}
 
 export const MemoryV2 = Plugin.define({
   id: "@log0u7/opencode-memory",
@@ -39,7 +65,7 @@ export const MemoryV2 = Plugin.define({
           properties: {
             kind: {
               type: "string",
-              description: "Entry type, e.g. decision, fact, preference, gotcha",
+              description: "Entry type, e.g. decision, fact, preference, gotcha, lesson",
             },
             title: { type: "string", description: "Short title (max 120 chars)" },
             body: { type: "string", description: "Entry content (max 8000 chars)" },
@@ -155,6 +181,47 @@ export const MemoryV2 = Plugin.define({
       db?.close();
       db = null;
     };
-    return cleanup;
+
+    const reflection = parseReflectionConfig(options.reflection);
+    if (!reflection) {
+      return cleanup;
+    }
+    const onIdle = createReflection(reflection, {
+      isSubagent: async (sessionID) => {
+        const session = await ctx.session.get({ sessionID });
+        return !!session.parentID;
+      },
+      transcript: (sessionID) => transcriptV2(ctx, sessionID),
+      generate: async (prompt) => {
+        const model = modelRefV2(reflection.model);
+        const result = await ctx.generate.text({ prompt, ...(model ? { model } : {}) });
+        return result.text;
+      },
+      saveLesson: (title, body) => {
+        ops.save({ kind: "lesson", title, body }, projectScope);
+      },
+    });
+    // The host keeps the event stream alive through this controller; aborting it stops
+    // the idle loop without touching the tool or session hooks.
+    const controller = new AbortController();
+    void (async () => {
+      for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+        if (event.type === "session.idle") {
+          onIdle(event.data.sessionID);
+        }
+      }
+    })().catch(() => {});
+    return async () => {
+      controller.abort();
+      await cleanup();
+    };
   },
 });
+
+function modelRefV2(model?: string | undefined): { providerID: string; id: string } | undefined {
+  if (!model) {
+    return undefined;
+  }
+  const [providerID, id] = model.split("/", 2);
+  return providerID && id ? { providerID, id } : undefined;
+}

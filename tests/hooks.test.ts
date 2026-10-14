@@ -53,6 +53,7 @@ describe("memory plugin hooks", () => {
     expect(output.system).toHaveLength(2);
     expect(output.system[1]).toContain("memory_search");
     expect(output.system[1]).toContain("memory_save");
+    expect(output.system[1]).toContain("kind=lesson");
     expect(output.system[1]?.toLowerCase()).toContain("credential");
   });
 
@@ -67,6 +68,7 @@ describe("memory plugin hooks", () => {
     expect(output.context).toHaveLength(1);
     expect(output.context[0]).toContain("memory_save");
     expect(output.context[0]).toContain("decision");
+    expect(output.context[0]).toContain("kind=lesson");
   });
 
   it("appends compaction context that asks for durable decisions with an inventory of stored entries", async () => {

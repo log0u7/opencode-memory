@@ -205,19 +205,21 @@ export function search(
 
 export function list(
   db: MemoryDb,
-  query: { scope: string; limit?: number; now?: number },
+  query: { scope: string; limit?: number; now?: number; kind?: string },
 ): Entry[] {
   const scope = canonicalScope(query.scope);
   const limit = clampLimit(query.limit, DEFAULT_LIMIT.list);
   const now = query.now ?? Date.now();
+  const kindFilter = query.kind === undefined ? "" : "AND kind = ? ";
+  const kindArgs = query.kind === undefined ? [] : [query.kind];
 
   return db.conn
     .all<Row>(
       `SELECT * FROM entries
-       WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?)
+       WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?) ${kindFilter}
        ORDER BY updated_at DESC, id ASC
        LIMIT ?`,
-      [scope, now, limit],
+      [scope, now, ...kindArgs, limit],
     )
     .map(rowToEntry);
 }

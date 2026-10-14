@@ -59,7 +59,25 @@ memory_forget(id="...")
 | `memory_list` | `scope?`, `limit?` | Recent entries, newest first. |
 | `memory_forget` | `id` or `query` | Delete one entry by id, or all matching a query. |
 
-Entry `kind` is free-form; conventions that work well: `decision`, `fact`, `preference`, `gotcha`, `compaction`.
+Entry `kind` is free-form; conventions that work well: `decision`, `fact`, `preference`, `gotcha`, `lesson`, `compaction`.
+
+### Feedback loop
+
+The agent is nudged to write memory itself: the system prompt asks for durable decisions, facts, preferences and gotchas as they emerge, and the compaction prompt repeats the instruction next to the store inventory. Reusable lessons (`kind=lesson`: a non-obvious approach that clearly failed or succeeded, and why) are injected first in later sessions, so known mistakes are not retried.
+
+Optional LLM reflection, off by default: on `session.idle` the plugin sends the last `transcriptChars` of the session to one bounded LLM call and saves at most `maxLessons` distilled lessons through the same store (the secret guard applies). Subagent sessions are skipped and at most one reflection runs per session.
+
+```json
+{
+  "plugin": [
+    ["@log0u7/opencode-memory", { "reflection": { "enabled": true } }]
+  ]
+}
+```
+
+Options: `enabled` (default `false`), `model` (`"provider/model"`, default: the host's model), `maxLessons` (default 3, cap 10), `transcriptChars` (default 8000).
+
+Cost per reflection: ~2k input tokens (the bounded transcript) and at most ~300 output tokens, at most once per session: roughly $0.001 with a small model, $0.01 with a frontier model (indicative). The nudges and injections are plain text: they cost nothing.
 
 ### Notes
 

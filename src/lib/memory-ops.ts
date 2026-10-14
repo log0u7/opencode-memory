@@ -74,11 +74,11 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
 /** How much of the store is summarised into a prompt, worst case. */
 export const INVENTORY_MAX_CHARS = 1200;
 
-const INVENTORY_HEADER = "Memory already stored for this project (newest first):";
+const INVENTORY_HEADER = "Memory already stored for this project (lessons first, then newest):";
 
 /** Tool descriptions shared by both entry points so the two hosts cannot drift. */
 export const TOOL_DESCRIPTIONS = {
-  save: "Save a durable entry to shared working memory (decisions, facts, preferences, gotchas). Never store credentials.",
+  save: "Save a durable entry to shared working memory (decisions, facts, preferences, gotchas, lessons). Never store credentials.",
   search:
     "Search shared working memory (all sessions on this machine). Results include this project's scope and global entries.",
   list: "List recent memory entries for a scope (default: this project), newest first.",
@@ -116,7 +116,8 @@ export function oncePerSession() {
 
 /**
  * Bounded summary of recent entries, injected into the first request of a session and
- * into the compaction context. `null` when there is nothing worth injecting, so a
+ * into the compaction context. Lessons are promoted above recency noise so a stored
+ * lesson survives a chatty store. `null` when there is nothing worth injecting, so a
  * caller pushes nothing at all.
  */
 export function memoryInventory(
@@ -128,14 +129,18 @@ export function memoryInventory(
     return null;
   }
 
-  const entries = list(getDb(), { scope, limit: 50 });
-  if (entries.length === 0) {
+  const lessons = list(getDb(), { scope, limit: 50, kind: "lesson" });
+  const others = list(getDb(), { scope, limit: 50 });
+  if (lessons.length === 0 && others.length === 0) {
     return null;
   }
 
+  const seen = new Set(lessons.map((entry) => entry.id));
+  const ordered = [...lessons, ...others.filter((entry) => !seen.has(entry.id))];
+
   const lines = [INVENTORY_HEADER];
   let size = INVENTORY_HEADER.length;
-  for (const entry of entries) {
+  for (const entry of ordered) {
     const line = `- [${entry.kind}] ${entry.title} (updated ${dayOf(entry.updated_at)})`;
     if (size + line.length + 1 > INVENTORY_MAX_CHARS) {
       break;

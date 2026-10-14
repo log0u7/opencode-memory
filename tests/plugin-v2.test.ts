@@ -2,13 +2,14 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Plugin } from "@opencode/plugin";
 import type { ToolContext } from "@opencode-ai/plugin";
 
 import { MemoryPlugin } from "../src/plugin.js";
 import { pluginModule } from "../src/index.js";
-import { MAX_LIMIT } from "../src/lib/store.js";
+import { list, MAX_LIMIT } from "../src/lib/store.js";
+import { openMemoryDb } from "../src/lib/db.js";
 
 function v1Input(worktree = "/home/u/project") {
   return {
@@ -55,7 +56,18 @@ type AddedTool = {
   ) => Promise<{ content?: string }>;
 };
 
-function fakeCtx(dbPath: string) {
+type V2Event = { type: string; data: { sessionID: string } };
+
+function fakeCtx(
+  dbPath: string,
+  options: Record<string, unknown> = {},
+  fixtures: {
+    events?: V2Event[];
+    sessionGet?: () => { parentID?: string };
+    context?: () => unknown[];
+    generateText?: () => Promise<{ text: string }>;
+  } = {},
+) {
   const added: AddedTool[] = [];
   const sessionHooks = new Map<
     string,
@@ -64,7 +76,7 @@ function fakeCtx(dbPath: string) {
 
   const ctx = {
     location: { directory: "/home/u/project" },
-    options: { dbPath },
+    options: { dbPath, ...options },
     tool: {
       transform: async (fn: (editor: { add: (t: AddedTool & { id: string }) => void }) => void) =>
         fn({ add: (t) => added.push(t) }),
@@ -76,8 +88,21 @@ function fakeCtx(dbPath: string) {
       ) => {
         sessionHooks.set(name, fn);
       },
+      get: vi.fn(async (input: { sessionID: string }) =>
+        fixtures.sessionGet ? fixtures.sessionGet() : { id: input.sessionID },
+      ),
+      context: vi.fn(async () => (fixtures.context ? fixtures.context() : [])),
     },
-    event: { subscribe: () => (async function* () {})() },
+    generate: { text: vi.fn(fixtures.generateText ?? (async () => ({ text: "[]" }))) },
+    event: {
+      subscribe: vi.fn(() =>
+        (async function* () {
+          for (const event of fixtures.events ?? []) {
+            yield event;
+          }
+        })(),
+      ),
+    },
   } as unknown as Plugin.Context;
 
   return { ctx, added, sessionHooks };
@@ -385,6 +410,72 @@ describe("opencode-memory v2 setup", () => {
     expect(out?.content).toContain("saved");
     expect(existsSync(dbPath)).toBe(true);
     rmSync(join(tmpdir(), `opencode-memory-v2-${Date.now()}`), { recursive: true, force: true });
+    await cleanup?.();
+  });
+
+  it("wires no event subscription when reflection is disabled", async () => {
+    const { ctx } = fakeCtx(tmpDbPath());
+    const cleanup = await pluginModule.setup(ctx);
+    expect(ctx.event.subscribe as unknown as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    await cleanup?.();
+  });
+
+  it("distills the session tail into lessons on session.idle", async () => {
+    const dbPath = tmpDbPath();
+    const { ctx } = fakeCtx(
+      dbPath,
+      { reflection: { enabled: true } },
+      {
+        events: [{ type: "session.idle", data: { sessionID: "s1" } }],
+        sessionGet: () => ({}),
+        context: () => [
+          {
+            type: "user",
+            text: "migrate the postgres tables tonight, the script is scripts/migrate.ts and it currently fires one giant UPDATE",
+          },
+          {
+            type: "assistant",
+            content: [
+              {
+                type: "text",
+                text: "batching by 1000 rows avoided the lock contention; applied the same batch size to the cleanup query and the whole run finished clean",
+              },
+            ],
+          },
+        ],
+        generateText: () =>
+          Promise.resolve({
+            text: '[{"title":"batch updates","body":"batching by 1000 avoided lock contention"}]',
+          }),
+      },
+    );
+    const cleanup = await pluginModule.setup(ctx);
+
+    const db = openMemoryDb(dbPath);
+    await vi.waitFor(() => {
+      expect(
+        list(db, { scope: "/home/u/project" }).some(
+          (e) => e.kind === "lesson" && e.title === "batch updates",
+        ),
+      ).toBe(true);
+    });
+    db.close();
+    await cleanup?.();
+  });
+
+  it("skips subagent sessions", async () => {
+    const { ctx } = fakeCtx(
+      tmpDbPath(),
+      { reflection: { enabled: true } },
+      {
+        events: [{ type: "session.idle", data: { sessionID: "child1" } }],
+        sessionGet: () => ({ parentID: "s1" }),
+        context: () => [],
+      },
+    );
+    const cleanup = await pluginModule.setup(ctx);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(ctx.generate.text).not.toHaveBeenCalled();
     await cleanup?.();
   });
 });

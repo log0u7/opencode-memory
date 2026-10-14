@@ -253,6 +253,21 @@ describe("store.list", () => {
     expect(hits.map((e) => e.id)).toEqual([g.id, b.id, a.id]);
     db.close();
   });
+
+  it("filters by kind across scope and global", () => {
+    const db = openMemoryDb(":memory:");
+    const lesson = save(db, input({ kind: "lesson", title: "old lesson" }), { now: 1000 });
+    const globalLesson = save(
+      db,
+      input({ kind: "lesson", scope: "global", title: "global lesson" }),
+      { now: 1500 },
+    );
+    save(db, input({ kind: "fact", title: "new fact" }), { now: 2000 });
+
+    const hits = list(db, { scope: "/work/project", kind: "lesson" });
+    expect(hits.map((e) => e.id)).toEqual([globalLesson.id, lesson.id]);
+    db.close();
+  });
 });
 
 describe("store.forget", () => {
