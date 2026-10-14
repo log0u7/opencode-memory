@@ -227,20 +227,17 @@ export function list(
 export type ForgetTarget = { scope: string } & ({ id: string } | { query: string });
 
 /**
- * Deletes inside one scope (plus the shared `global` scope), never across the whole
- * machine: the store is shared, so an unscoped delete would silently hit other
- * projects.
+ * Query deletes stay inside one scope (plus the shared `global` scope): a fuzzy match
+ * must never silently hit other projects' entries. Id deletes are machine-wide because
+ * the id is globally unique: closed worktrees stay cleanable from any project.
  */
 export function forget(db: MemoryDb, target: ForgetTarget): number {
-  const scope = canonicalScope(target.scope);
-
   if ("id" in target) {
-    db.conn.run("DELETE FROM entries WHERE id = ? AND (scope = ? OR scope = 'global')", [
-      target.id,
-      scope,
-    ]);
+    db.conn.run("DELETE FROM entries WHERE id = ?", [target.id]);
     return changesOf(db);
   }
+
+  const scope = canonicalScope(target.scope);
 
   // Deleting is precision-first: only the strict all-token match, never the fuzzy
   // fallback. A wrong read costs the model a retry, a wrong delete is unrecoverable.

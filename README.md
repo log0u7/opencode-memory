@@ -84,7 +84,7 @@ Cost per reflection: ~2k input tokens (the bounded transcript) and at most ~300 
 - All sessions on the machine share one store (WAL mode, concurrent-safe).
 - Entries that look like secrets (`sk-…`, `ghp_…`, `xoxb-…`) are refused, in the title, kind, body and tags.
 - Every repeated `memory_save` of the same title in the same scope rewrites the entry, so the store does not grow with duplicates, and expired rows are purged on save.
-- `memory_forget` never leaves the scope it is called from, so a project cannot delete another project's entries.
+- `memory_forget` by query never leaves the scope it is called from, so a project cannot fuzzily delete another project's entries; by id it deletes anywhere (ids are globally unique), which keeps closed worktrees cleanable.
 - On the first request of a session, the most recent entries are injected into the system prompt as a bounded list (titles only), so the model does not have to remember to search. `memory_search` remains the tool for deeper lookups.
 - On session compaction, the plugin lists the stored entries in the compaction context and asks the compaction prompt to emit durable decisions, so the model summarises from an inventory instead of recall.
 - Injections stay bounded (~1200 characters worst case) and nothing is injected, nor any store file created, when memory is unused.
