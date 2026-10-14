@@ -73,6 +73,9 @@ describe("store.save", () => {
     expect(() =>
       save(db, input({ tags: Array.from({ length: 13 }, (_, i) => `t${i}`) })),
     ).toThrow();
+    // A tool result stays bounded, so a tag cannot smuggle an unbounded payload.
+    expect(() => save(db, input({ tags: ["x".repeat(65)] }))).toThrow(/tag/i);
+    expect(() => save(db, input({ tags: ["x".repeat(64)] }))).not.toThrow();
     db.close();
   });
 
@@ -106,6 +109,37 @@ describe("store.save", () => {
     expect(second.created_at).toBe(first.created_at);
     expect(second.updated_at).toBeGreaterThan(first.updated_at);
     expect(list(db, { scope: "/work/project" })).toHaveLength(1);
+    db.close();
+  });
+
+  it("persists a new expiry when rewriting an entry", () => {
+    const db = openMemoryDb(":memory:");
+    const first = save(db, input({ expires_at: Date.now() + 600_000 }));
+    const later = Date.now() + 1_200_000;
+    const rewritten = save(db, input({ expires_at: later }));
+
+    expect(rewritten.id).toBe(first.id);
+    expect(rewritten.expires_at).toBe(later);
+    const stored = db.conn.get<{ expires_at: number | null }>(
+      "SELECT expires_at FROM entries WHERE id = ?",
+      [rewritten.id],
+    );
+    expect(stored?.expires_at).toBe(later);
+    db.close();
+  });
+
+  it("clears the expiry when rewriting without one", () => {
+    const db = openMemoryDb(":memory:");
+    const first = save(db, input({ expires_at: Date.now() + 600_000 }));
+    const rewritten = save(db, input({ expires_at: null }));
+
+    expect(rewritten.id).toBe(first.id);
+    expect(rewritten.expires_at).toBeNull();
+    const stored = db.conn.get<{ expires_at: number | null }>(
+      "SELECT expires_at FROM entries WHERE id = ?",
+      [rewritten.id],
+    );
+    expect(stored?.expires_at).toBeNull();
     db.close();
   });
 
@@ -364,15 +398,37 @@ describe("fts query escaping", () => {
     expect(hits).toHaveLength(1);
     db.close();
   });
-});
 
-describe("fts query escaping", () => {
-  it("handles extra whitespace and double quotes safely", () => {
+  it("returns nothing instead of failing on a punctuation-only query", () => {
     const db = openMemoryDb(":memory:");
     save(db, input({ title: "quote handling" }));
+    expect(search(db, { query: "!!!", scope: "/work/project" })).toEqual([]);
+    expect(search(db, { query: '"""', scope: "/work/project" })).toEqual([]);
+    db.close();
+  });
+});
 
-    const hits = search(db, { query: '  "quote"   handling  ', scope: "/work/project" });
-    expect(hits).toHaveLength(1);
+describe("entry title folding", () => {
+  // ponytail: SQLite lower() folds ASCII only, so a non-ASCII title re-saved in a
+  // different case is not deduped. Upgrade path: a normalized key column.
+  it("dedups ascii titles case-insensitively but not non-ascii ones", () => {
+    const db = openMemoryDb(":memory:");
+    save(db, input({ title: "Über config" }));
+
+    expect(list(db, { scope: "/work/project" })).toHaveLength(1);
+
+    const second = save(db, input({ title: "ÜBER CONFIG" }));
+    expect(second.id).toBeTruthy();
+    expect(list(db, { scope: "/work/project" })).toHaveLength(2);
+    db.close();
+  });
+
+  it("dedups an ascii title in any case", () => {
+    const db = openMemoryDb(":memory:");
+    const first = save(db, input({ title: "use wal mode" }));
+    const second = save(db, input({ title: "Use WAL Mode" }));
+
+    expect(second.id).toBe(first.id);
     db.close();
   });
 });

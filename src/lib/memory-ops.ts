@@ -82,7 +82,8 @@ export const TOOL_DESCRIPTIONS = {
   search:
     "Search shared working memory (all sessions on this machine). Results include this project's scope and global entries.",
   list: "List recent memory entries for a scope (default: this project), newest first.",
-  forget: "Delete memory entries by id, or all entries matching a query.",
+  forget:
+    "Delete memory entries by id, or all entries matching a query. Deletes only inside this project's scope (plus global entries); an entry saved under another scope needs that scope to be removed.",
 } as const;
 
 /**

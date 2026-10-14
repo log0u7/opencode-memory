@@ -6,6 +6,7 @@ import type { Entry, EntryInput } from "../types/entry.js";
 const TITLE_MAX = 120;
 const BODY_MAX = 8000;
 const TAGS_MAX = 12;
+export const TAG_MAX = 64;
 export const KIND_MAX = 64;
 /** Hard ceiling on how many entries one read can return, whatever the caller asks. */
 export const MAX_LIMIT = 50;
@@ -55,6 +56,10 @@ function validateEntry(input: EntryInput): void {
   }
   if (input.tags.length > TAGS_MAX) {
     throw new TypeError(`at most ${TAGS_MAX} tags allowed`);
+  }
+  // A tool result stays bounded, so a tag cannot smuggle an unbounded payload either.
+  if (input.tags.some((tag) => tag.length > TAG_MAX)) {
+    throw new TypeError(`each tag must be at most ${TAG_MAX} characters`);
   }
   if (SECRET_PATTERNS.some((pattern) => looksLikeSecret(input, pattern))) {
     throw new SecretDetectedError();
@@ -109,19 +114,27 @@ export function save(db: MemoryDb, input: EntryInput, options: { now?: number } 
 
   // A repeated title in the same scope is the same knowledge: rewrite it instead of
   // stacking duplicates.
+  // ponytail: SQLite lower() folds ASCII only, so a non-ASCII title re-saved in a
+  // different case is not deduped; and the read-then-write is not transactional, so two
+  // concurrent saves of the same title can both insert. Ceiling is a rare duplicate, not
+  // data loss. Upgrade path: a normalized key column plus BEGIN IMMEDIATE.
   const existing = db.conn.get<{ id: string; created_at: number }>(
     "SELECT id, created_at FROM entries WHERE scope = ? AND lower(trim(title)) = ?",
     [scope, input.title.trim().toLowerCase()],
   );
 
   if (existing) {
-    db.conn.run("UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ? WHERE id = ?", [
-      input.kind,
-      input.body,
-      JSON.stringify(input.tags),
-      now,
-      existing.id,
-    ]);
+    db.conn.run(
+      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ? WHERE id = ?",
+      [
+        input.kind,
+        input.body,
+        JSON.stringify(input.tags),
+        now,
+        input.expires_at ?? null,
+        existing.id,
+      ],
+    );
     return {
       id: existing.id,
       scope,
