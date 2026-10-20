@@ -52,15 +52,82 @@ describe("memory ops", () => {
     close();
   });
 
+  it("says whether a save created an entry or rewrote one", () => {
+    const { ops, close } = store();
+
+    const created = ops.save(
+      { kind: "decision", title: "Adopt batching", body: "batch 1000" },
+      "/w",
+    );
+    const rewritten = ops.save(
+      { kind: "decision", title: "Adopt batching", body: "batch 500" },
+      "/w",
+    );
+
+    expect(created).toMatch(/^saved [0-9a-f-]{36} \(\/w, created\)$/);
+    expect(rewritten).toMatch(/^saved [0-9a-f-]{36} \(\/w, updated\)$/);
+    expect(rewritten).toContain(created.split(" ")[1]);
+    close();
+  });
+
+  it("lists what a query delete removed instead of only counting it", () => {
+    const { ops, close } = store();
+    ops.save({ kind: "fact", title: "postgres sharding", body: "x" }, "/w");
+    ops.save({ kind: "fact", title: "postgres replica", body: "x" }, "/w");
+    ops.save({ kind: "fact", title: "docker compose", body: "x" }, "/w");
+
+    const report = ops.forget({ query: "postgres" }, "/w");
+
+    expect(report).toMatch(/^deleted 2 entries: "/);
+    expect(report).toContain('"postgres sharding" (');
+    expect(report).toContain('"postgres replica" (');
+    expect(report).not.toContain("docker compose");
+    expect(ops.forget({ query: "postgres" }, "/w")).toBe("deleted 0 entries");
+    close();
+  });
+
+  it("caps the delete report so a broad query cannot flood the context", () => {
+    const { ops, close } = store();
+    for (let i = 0; i < 12; i++) {
+      ops.save({ kind: "fact", title: `postgres note ${i}`, body: "x" }, "/w");
+    }
+
+    const report = ops.forget({ query: "postgres" }, "/w");
+
+    expect(report).toContain("deleted 12 entries");
+    expect(report.match(/\(/g)).toHaveLength(10);
+    expect(report).toContain("and 2 more");
+    close();
+  });
+
+  it("reports the store size and the oldest entry in stats", () => {
+    const { ops, close } = store();
+    ops.save({ kind: "fact", title: "old note", body: "x" }, "/w");
+    ops.save({ kind: "fact", title: "new note", body: "x" }, "/w");
+
+    const result = ops.stats("/w");
+
+    // A size of zero means the pragmas were read wrong, not an empty store.
+    const size = /store: (\d+(?:\.\d+)?) ([KMG]B)/.exec(result);
+    expect(size).not.toBeNull();
+    expect(Number(size?.[1])).toBeGreaterThan(0);
+    expect(result).toMatch(/oldest: \d{4}-\d{2}-\d{2}/);
+    expect(result).toContain("fact: 2");
+    expect(result).toContain("total: 2");
+    close();
+  });
+
   it("returns the same model-facing text for every operation", () => {
     const { ops, close } = store();
 
     expect(
       ops.save({ kind: "decision", title: "Adopt batching", body: "batch 1000" }, "/w"),
-    ).toMatch(/^saved .+ \(\/w\)$/);
+    ).toMatch(/^saved [0-9a-f-]{36} \(\/w, created\)$/);
     expect(ops.search({ query: "batching" }, "/w")).toContain("Adopt batching");
     expect(ops.list({}, "/w")).toBe(ops.search({ query: "batching" }, "/w"));
-    expect(ops.forget({ query: "batching" }, "/w")).toBe("deleted 1 entry");
+    expect(ops.forget({ query: "batching" }, "/w")).toMatch(
+      /^deleted 1 entry: "Adopt batching" \(/,
+    );
     expect(ops.search({ query: "batching" }, "/w")).toBe("no matching memory entries");
     close();
   });
@@ -103,7 +170,9 @@ describe("memory ops", () => {
     ops.save({ kind: "fact", title: "postgres sharding", body: "uses postgres" }, "/w");
     ops.save({ kind: "fact", title: "postgres replica", body: "uses postgres" }, "/other");
 
-    expect(ops.forget({ query: "postgres" }, "/w")).toBe("deleted 1 entry");
+    expect(ops.forget({ query: "postgres" }, "/w")).toMatch(
+      /^deleted 1 entry: "postgres sharding" \(/,
+    );
     expect(list(getDb(), { scope: "/other" })).toHaveLength(1);
     close();
   });

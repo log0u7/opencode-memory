@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `memory_save` reports whether it created an entry or rewrote the one already holding that
+  scope and title, instead of one undifferentiated receipt: the in-place dedup rewrite is
+  no longer silent.
+- `memory_forget` lists the titles and ids it removed (ten named, then a count of the
+  rest) instead of only a count, so a broad query delete is auditable. `store.forget`
+  now returns the removed entries rather than a number.
+- `memory_stats` reports the store size on disk and the oldest live entry beside the kind
+  counts. The store has no size cap and no eviction, so this is the only signal that it is
+  growing.
 - Dev-dependency bumps from the Dependabot minor-and-patch group: `@biomejs/biome`
   2.5.15, `@opencode-ai/plugin` 1.18.35 (with the transitive `@opencode-ai/sdk` 1.18.35),
   `lefthook` 2.1.17, and in-range lockfile refreshes (vitest 5.0.3, `@types/node` 26.6.4).

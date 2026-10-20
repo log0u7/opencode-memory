@@ -16,6 +16,7 @@ import {
   MAX_LIMIT,
   renderEntries,
   save,
+  saveEntry,
   search,
   SecretDetectedError,
   sweep,
@@ -207,6 +208,18 @@ describe("store.save", () => {
     db.close();
   });
 
+  it("tells a fresh save apart from a rewrite, so a caller can report it", () => {
+    const db = openMemoryDb(":memory:");
+    const created = saveEntry(db, input({ body: "batches of 1000" }));
+    const rewritten = saveEntry(db, input({ body: "batches of 500" }), { now: Date.now() + 1 });
+
+    expect(created.created).toBe(true);
+    expect(rewritten.created).toBe(false);
+    expect(rewritten.entry.id).toBe(created.entry.id);
+    expect(saveEntry).toBeTypeOf("function");
+    db.close();
+  });
+
   it("persists a new expiry when rewriting an entry", () => {
     const db = openMemoryDb(":memory:");
     const first = save(db, input({ expires_at: Date.now() + 600_000 }));
@@ -366,13 +379,14 @@ describe("store.list", () => {
 });
 
 describe("store.forget", () => {
-  it("deletes by id and by query, returning deleted count", () => {
+  it("deletes by id and by query, returning the deleted entries", () => {
     const db = openMemoryDb(":memory:");
     const e1 = save(db, input());
     save(db, input({ title: "another postgres thing" }));
 
-    expect(forget(db, { id: e1.id, scope: "/work/project" })).toBe(1);
-    expect(forget(db, { query: "postgres", scope: "/work/project" })).toBe(1);
+    expect(forget(db, { id: e1.id, scope: "/work/project" }).map((e) => e.id)).toEqual([e1.id]);
+    const byQuery = forget(db, { query: "postgres", scope: "/work/project" });
+    expect(byQuery.map((e) => e.title)).toEqual(["another postgres thing"]);
     expect(list(db, { scope: "/work/project" })).toEqual([]);
     db.close();
   });
@@ -382,7 +396,7 @@ describe("store.forget", () => {
     save(db, input({ title: "postgres batching", scope: "/work/project" }));
     save(db, input({ title: "postgres container", scope: "/work/other" }));
 
-    expect(forget(db, { query: "postgres", scope: "/work/project" })).toBe(1);
+    expect(forget(db, { query: "postgres", scope: "/work/project" })).toHaveLength(1);
     expect(list(db, { scope: "/work/other" })).toHaveLength(1);
     db.close();
   });
@@ -391,7 +405,7 @@ describe("store.forget", () => {
     const db = openMemoryDb(":memory:");
     const zombie = save(db, input({ title: "zombie note", scope: "/old/worktree" }));
 
-    expect(forget(db, { id: zombie.id, scope: "/work/project" })).toBe(1);
+    expect(forget(db, { id: zombie.id, scope: "/work/project" })).toHaveLength(1);
     expect(list(db, { scope: "/old/worktree" })).toEqual([]);
     db.close();
   });
@@ -401,7 +415,7 @@ describe("store.forget", () => {
     save(db, input({ title: "postgres tuning", scope: "global" }));
     save(db, input({ title: "postgres sharding", scope: "/work/other" }));
 
-    expect(forget(db, { query: "postgres", scope: "/work/project" })).toBe(1);
+    expect(forget(db, { query: "postgres", scope: "/work/project" })).toHaveLength(1);
     expect(list(db, { scope: "/work/project" })).toEqual([]);
     expect(list(db, { scope: "/work/other" })).toHaveLength(1);
     db.close();
@@ -411,18 +425,18 @@ describe("store.forget", () => {
     const db = openMemoryDb(":memory:");
     const foreign = save(db, input({ title: "postgres replica", scope: "/work/other" }));
 
-    expect(forget(db, { id: foreign.id, scope: "/work/project" })).toBe(1);
+    expect(forget(db, { id: foreign.id, scope: "/work/project" })).toHaveLength(1);
     expect(list(db, { scope: "/work/other" })).toEqual([]);
     db.close();
   });
 
-  it("reports zero when neither id nor query matches anything", () => {
+  it("reports nothing when neither id nor query matches anything", () => {
     const db = openMemoryDb(":memory:");
     save(db, input({ title: "postgres batching" }));
 
-    expect(forget(db, { query: "zebra qux", scope: "/work/project" })).toBe(0);
-    expect(forget(db, { query: "   ", scope: "/work/project" })).toBe(0);
-    expect(forget(db, { id: "missing", scope: "/work/project" })).toBe(0);
+    expect(forget(db, { query: "zebra qux", scope: "/work/project" })).toEqual([]);
+    expect(forget(db, { query: "   ", scope: "/work/project" })).toEqual([]);
+    expect(forget(db, { id: "missing", scope: "/work/project" })).toEqual([]);
     expect(list(db, { scope: "/work/project" })).toHaveLength(1);
     db.close();
   });
@@ -432,10 +446,31 @@ describe("store.forget", () => {
     save(db, input({ title: "postgres batching" }));
     save(db, input({ title: "docker compose" }));
 
-    expect(forget(db, { query: "postgres batching", scope: "/work/project" })).toBe(1);
+    expect(forget(db, { query: "postgres batching", scope: "/work/project" })).toHaveLength(1);
     // "batch" is only a prefix of the stored tokens: the fuzzy fallback would match,
     // and a destructive path must never use it.
-    expect(forget(db, { query: "batch", scope: "/work/project" })).toBe(0);
+    expect(forget(db, { query: "batch", scope: "/work/project" })).toEqual([]);
+    expect(list(db, { scope: "/work/project" }).map((e) => e.title)).toEqual(["docker compose"]);
+    db.close();
+  });
+
+  it("returns every entry a query delete removed, not just the first", () => {
+    const db = openMemoryDb(":memory:");
+    // The default fixture tags carry "postgres", and tags are indexed: keep them out of
+    // the way so the query matches on the title alone.
+    const note = { tags: ["db"] };
+    save(db, input({ ...note, title: "postgres batching", body: "batches" }));
+    save(db, input({ ...note, title: "postgres replica", body: "replicas" }));
+    save(db, input({ ...note, title: "postgres tuning", body: "tuning" }));
+    save(db, input({ ...note, title: "docker compose", body: "containers" }));
+
+    const deleted = forget(db, { query: "postgres", scope: "/work/project" });
+    expect(deleted.map((e) => e.title).sort()).toEqual([
+      "postgres batching",
+      "postgres replica",
+      "postgres tuning",
+    ]);
+    expect(deleted.every((e) => e.body.length > 0)).toBe(true);
     expect(list(db, { scope: "/work/project" }).map((e) => e.title)).toEqual(["docker compose"]);
     db.close();
   });

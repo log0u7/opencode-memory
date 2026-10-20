@@ -1,7 +1,17 @@
 import { existsSync } from "node:fs";
 
-import type { MemoryDb } from "./db.js";
-import { forget, list, renderEntries, save, search, SecretDetectedError, stats } from "./store.js";
+import { databaseSizeBytes, type MemoryDb } from "./db.js";
+import {
+  forget,
+  list,
+  oldestCreated,
+  renderEntries,
+  saveEntry,
+  search,
+  SecretDetectedError,
+  stats,
+} from "./store.js";
+import type { Entry } from "../types/entry.js";
 
 // Optional properties accept undefined explicitly: the two SDK dialects hand raw
 // tool arguments straight through, and the build enables exactOptionalPropertyTypes.
@@ -30,7 +40,7 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
   return {
     save: (args, scope) =>
       run(() => {
-        const entry = save(getDb(), {
+        const { entry, created } = saveEntry(getDb(), {
           scope,
           kind: args.kind,
           title: args.title,
@@ -38,7 +48,7 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
           tags: args.tags ?? [],
           expires_at: args.expires_at ?? null,
         });
-        return `saved ${entry.id} (${entry.scope})`;
+        return `saved ${entry.id} (${entry.scope}, ${created ? "created" : "updated"})`;
       }),
     search: (args, scope) =>
       run(() => {
@@ -59,15 +69,20 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
       }),
     forget: (args, scope) =>
       run(() => {
-        if (args.id !== undefined) {
-          const deleted = forget(getDb(), { id: args.id, scope });
-          return `deleted ${deleted} entr${deleted === 1 ? "y" : "ies"}`;
+        const removed =
+          args.id !== undefined
+            ? forget(getDb(), { id: args.id, scope })
+            : args.query !== undefined
+              ? forget(getDb(), { query: args.query, scope })
+              : null;
+        if (removed === null) {
+          return "provide id or query";
         }
-        if (args.query !== undefined) {
-          const deleted = forget(getDb(), { query: args.query, scope });
-          return `deleted ${deleted} entr${deleted === 1 ? "y" : "ies"}`;
+        if (removed.length === 0) {
+          return "deleted 0 entries";
         }
-        return "provide id or query";
+        const plural = removed.length === 1 ? "y" : "ies";
+        return `deleted ${removed.length} entr${plural}: ${renderRemoved(removed)}`;
       }),
     stats: (scope) =>
       run(() => {
@@ -76,9 +91,31 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
           return "no memory entries";
         }
         const total = counts.reduce((sum, row) => sum + row.count, 0);
-        return `${counts.map((row) => `${row.kind}: ${row.count}`).join(", ")}, total: ${total}`;
+        const oldest = oldestCreated(getDb(), { scope });
+        const size = formatBytes(databaseSizeBytes(getDb()));
+        const age = oldest === null ? "" : `, oldest: ${dayOf(oldest)}`;
+        return `store: ${size}${age}, ${counts
+          .map((row) => `${row.kind}: ${row.count}`)
+          .join(", ")}, total: ${total}`;
       }),
   };
+}
+
+/** How many removed entries a delete report names before it summarizes the rest, so a
+ * broad query delete stays a bounded tool result. */
+const REMOVED_REPORT_MAX = 10;
+
+function renderRemoved(entries: Entry[]): string {
+  const listed = entries
+    .slice(0, REMOVED_REPORT_MAX)
+    .map((entry) => `${JSON.stringify(entry.title)} (${entry.id})`);
+  const rest = entries.length - REMOVED_REPORT_MAX;
+  return rest > 0 ? `${listed.join(", ")}, and ${rest} more` : listed.join(", ");
+}
+
+function formatBytes(bytes: number): string {
+  const kb = bytes / 1024;
+  return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb / 1024).toFixed(1)} MB`;
 }
 
 /** How much of the store is summarised into a prompt, worst case. */

@@ -14,7 +14,7 @@ Every session gets five tools (`memory_save`, `memory_search`, `memory_list`, `m
 
 - Results are capped: at most 50 entries per call, and each body is rendered as a 500-character preview. A tool result has a bounded size whatever the model asks for.
 - `memory_save` rewrites an entry that repeats a scope and title instead of stacking duplicates, and purges expired rows.
-- `memory_forget` by query only deletes inside the caller's scope (plus the shared `global` scope); by id it deletes the entry wherever it lives, since ids are globally unique.
+- `memory_forget` by query only deletes inside the caller's scope (plus the shared `global` scope); by id it deletes the entry wherever it lives, since ids are globally unique. Either way it reports the titles and ids it removed, so a broad query delete is auditable.
 - Entries that look like secrets (`sk-…`, `github_pat_…`, `gho_…`, `glpat-…`, `xoxb-…`, webhook URLs, …) are refused, in the title, kind, body and tags alike.
 
 ## Install
@@ -86,7 +86,9 @@ Cost per reflection: ~2k input tokens (the bounded transcript) and at most ~300 
 - All sessions on the machine share one store (WAL mode, concurrent-safe).
 - Entries that look like secrets (`sk-…`, `github_pat_…`, `gho_…`, `glpat-…`, `xoxb-…`, webhook URLs, …) are refused, in the title, kind, body and tags.
 - Every repeated `memory_save` of the same title in the same scope rewrites the entry, so the store does not grow with duplicates, and expired rows are purged on save.
-- `memory_forget` by query never leaves the scope it is called from, so a project cannot fuzzily delete another project's entries; by id it deletes anywhere (ids are globally unique), which keeps closed worktrees cleanable.
+- `memory_forget` by query never leaves the scope it is called from, so a project cannot fuzzily delete another project's entries; by id it deletes anywhere (ids are globally unique), which keeps closed worktrees cleanable. Both forms report the titles and ids they removed.
+- `memory_save` reports whether it created an entry or rewrote the one already holding that scope and title, so a silent overwrite is visible to the model.
+- `memory_stats` reports the store size on disk and the oldest live entry next to the kind counts. The store has no size cap and no eviction, so this is the only growth signal.
 - On the first request of a session, the most recent entries are injected into the system prompt as a bounded list (titles only), so the model does not have to remember to search. `memory_search` remains the tool for deeper lookups.
 - On session compaction, the plugin lists the stored entries in the compaction context and asks the compaction prompt to emit durable decisions, so the model summarises from an inventory instead of recall.
 - Injections stay bounded (~1200 characters worst case) and nothing is injected, nor any store file created, when memory is unused.

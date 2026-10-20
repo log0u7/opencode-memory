@@ -116,7 +116,19 @@ export function sweep(db: MemoryDb, options: { now?: number } = {}): number {
   return db.conn.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
 }
 
+/** Whether a save inserted a row or rewrote the one already holding that scope and
+ * title, so a caller can tell the model what actually happened. */
+export type SaveResult = { entry: Entry; created: boolean };
+
 export function save(db: MemoryDb, input: EntryInput, options: { now?: number } = {}): Entry {
+  return saveEntry(db, input, options).entry;
+}
+
+export function saveEntry(
+  db: MemoryDb,
+  input: EntryInput,
+  options: { now?: number } = {},
+): SaveResult {
   validateEntry(input);
   const scope = canonicalScope(input.scope);
   const now = options.now ?? Date.now();
@@ -148,15 +160,18 @@ export function save(db: MemoryDb, input: EntryInput, options: { now?: number } 
       ],
     );
     return {
-      id: existing.id,
-      scope,
-      kind: input.kind,
-      title: input.title,
-      body: input.body,
-      tags: input.tags,
-      created_at: existing.created_at,
-      updated_at: now,
-      expires_at: input.expires_at,
+      entry: {
+        id: existing.id,
+        scope,
+        kind: input.kind,
+        title: input.title,
+        body: input.body,
+        tags: input.tags,
+        created_at: existing.created_at,
+        updated_at: now,
+        expires_at: input.expires_at,
+      },
+      created: false,
     };
   }
 
@@ -177,15 +192,18 @@ export function save(db: MemoryDb, input: EntryInput, options: { now?: number } 
   );
 
   return {
-    id,
-    scope,
-    kind: input.kind,
-    title: input.title,
-    body: input.body,
-    tags: input.tags,
-    created_at: now,
-    updated_at: now,
-    expires_at: input.expires_at,
+    entry: {
+      id,
+      scope,
+      kind: input.kind,
+      title: input.title,
+      body: input.body,
+      tags: input.tags,
+      created_at: now,
+      updated_at: now,
+      expires_at: input.expires_at,
+    },
+    created: true,
   };
 }
 
@@ -253,36 +271,56 @@ export function stats(
   );
 }
 
+/** Creation date of the oldest live entry in one scope plus `global`, or null when the
+ * scope is empty: the store grows without bound, so age is the signal that knowledge is
+ * rotting rather than accumulating. */
+export function oldestCreated(db: MemoryDb, query: { scope: string; now?: number }): number | null {
+  const scope = canonicalScope(query.scope);
+  const now = query.now ?? Date.now();
+  const row = db.conn.get<{ oldest: number | null }>(
+    `SELECT MIN(created_at) AS oldest FROM entries
+     WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?)`,
+    [scope, now],
+  );
+  return row?.oldest ?? null;
+}
+
 /**
  * Query deletes stay inside one scope (plus the shared `global` scope): a fuzzy match
  * must never silently hit other projects' entries. Id deletes are machine-wide because
  * the id is globally unique: closed worktrees stay cleanable from any project.
+ *
+ * The removed entries come back, not a count: a broad query can take many rows at once,
+ * and the caller has to be able to say which ones.
  */
-export function forget(db: MemoryDb, target: ForgetTarget): number {
-  if ("id" in target) {
-    db.conn.run("DELETE FROM entries WHERE id = ?", [target.id]);
-    return changesOf(db);
-  }
+export function forget(db: MemoryDb, target: ForgetTarget): Entry[] {
+  const removed =
+    "id" in target
+      ? db.conn.all<Row>("SELECT * FROM entries WHERE id = ?", [target.id])
+      : removedByQuery(db, target);
 
+  if (removed.length === 0) {
+    return [];
+  }
+  const ids = removed.map((row) => row.id);
+  db.conn.run(`DELETE FROM entries WHERE id IN (${ids.map(() => "?").join(", ")})`, ids);
+  return removed.map(rowToEntry);
+}
+
+function removedByQuery(db: MemoryDb, target: { query: string; scope: string }): Row[] {
   const scope = canonicalScope(target.scope);
 
   // Deleting is precision-first: only the strict all-token match, never the fuzzy
   // fallback. A wrong read costs the model a retry, a wrong delete is unrecoverable.
   const match = strictMatch(target.query);
   if (match === null) {
-    return 0;
+    return [];
   }
-  db.conn.run(
-    `DELETE FROM entries WHERE id IN (
-       SELECT e.id FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid WHERE entries_fts MATCH ?
-     ) AND (scope = ? OR scope = 'global')`,
+  return db.conn.all<Row>(
+    `SELECT e.* FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid
+     WHERE entries_fts MATCH ? AND (e.scope = ? OR e.scope = 'global')`,
     [match, scope],
   );
-  return changesOf(db);
-}
-
-function changesOf(db: MemoryDb): number {
-  return db.conn.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
 }
 
 type Row = Omit<Entry, "tags"> & { tags: string };

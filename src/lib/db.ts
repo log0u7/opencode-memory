@@ -72,3 +72,11 @@ export function openMemoryDb(path: string): MemoryDb {
 
   return { conn, close: () => conn.close() };
 }
+
+/** Size the database occupies on disk, WAL sidecars excluded. The store has no size cap
+ * and no eviction, so this is the only signal a caller gets that it is growing. */
+export function databaseSizeBytes(db: MemoryDb): number {
+  const pages = db.conn.get<{ page_count: number }>("PRAGMA page_count")?.page_count ?? 0;
+  const pageSize = db.conn.get<{ page_size: number }>("PRAGMA page_size")?.page_size ?? 0;
+  return pages * pageSize;
+}
