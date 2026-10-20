@@ -70,7 +70,7 @@ describe("store.save", () => {
     expect(() => save(db, input({ body: "aws key AKIAABCDEFGHIJKLMNOP in notes" }))).toThrow(
       SecretDetectedError,
     );
-    expect(() => save(db, input({ body: "gitlab token glpat-abcdefghijklmnopqrst" }))).toThrow(
+    expect(() => save(db, input({ body: "gitlab token glpat-A1A1A1A1A1A1A1A1A1A1" }))).toThrow(
       SecretDetectedError,
     );
     expect(() =>
@@ -112,7 +112,7 @@ describe("store.save", () => {
       save(db, input({ body: "deploy ghs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })),
     ).toThrow(SecretDetectedError);
     // GitLab rotate token, npm granular token, AWS temporary id, Google OAuth token.
-    expect(() => save(db, input({ body: "rotate glrt-abcdefghijklmnopqrst" }))).toThrow(
+    expect(() => save(db, input({ body: "rotate glrt-A1A1A1A1A1A1A1A1A1A1" }))).toThrow(
       SecretDetectedError,
     );
     expect(() =>
@@ -135,6 +135,33 @@ describe("store.save", () => {
         db,
         input({
           body: "hook https://hooks.slack.com/services/T00000000/B00000000/abcdefghijklmnop",
+        }),
+      ),
+    ).toThrow(SecretDetectedError);
+    db.close();
+  });
+
+  it("accepts prose that merely contains a token-like run after a prefix", () => {
+    const db = openMemoryDb(":memory:");
+    // The widened patterns whose tail class allows `_` or `-` would otherwise refuse an
+    // ordinary sentence written as one long token, and a refused save costs the model a
+    // retry it cannot explain.
+    expect(() =>
+      save(db, input({ body: "never commit github_pat_style_tokens_they_are_rotated_quarterly" })),
+    ).not.toThrow();
+    expect(() =>
+      save(db, input({ body: "rotate the glrt-token-every-ninety-days-and-redact-the-old-one" })),
+    ).not.toThrow();
+    expect(() =>
+      save(db, input({ body: "the ya29.some-really-long-identifier-in-prose is not a token" })),
+    ).not.toThrow();
+    // The real formats still are. The GitLab and Google cases are covered above, so only
+    // the fine-grained PAT is repeated here.
+    expect(() =>
+      save(
+        db,
+        input({
+          body: "pat github_pat_11AAAA7Yk3mQ0abcdefghijklmnopqrstuvwxyz0123456789ABCDEF for ci",
         }),
       ),
     ).toThrow(SecretDetectedError);

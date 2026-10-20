@@ -23,7 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`gho_`, `ghs_`, `ghu_`, `ghr_`), GitLab rotate tokens (`glrt-`), npm granular tokens
   (`npm_`), AWS temporary key ids (`ASIA`), Google OAuth access tokens (`ya29.`) and Slack
   incoming webhook URLs. The existing `sk-` pattern already covered Anthropic `sk-ant-`
-  keys.
+  keys. The three patterns whose tail class allows `_` or `-` additionally require a digit
+  or an uppercase letter in the tail, so a sentence written as one long snake_case or
+  hyphenated token right after a prefix is saved instead of being refused as a credential.
 
 ### Changed
 
