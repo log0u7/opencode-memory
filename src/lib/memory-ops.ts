@@ -21,6 +21,7 @@ export type SaveArgs = {
   body: string;
   tags?: string[] | undefined;
   expires_at?: number | null | undefined;
+  source?: string | undefined;
 };
 export type SearchArgs = { query: string; limit?: number | undefined };
 export type ListArgs = { limit?: number | undefined };
@@ -29,7 +30,7 @@ export type ForgetArgs = { id?: string | undefined; query?: string | undefined }
 /** One shared behaviour behind both plugin entry points. Every operation returns the
  * model-facing text directly, so a caller cannot bypass caps or error handling. */
 export type MemoryOps = {
-  save: (args: SaveArgs, scope: string) => string;
+  save: (args: SaveArgs, scope: string, source?: string) => string;
   search: (args: SearchArgs, scope: string) => string;
   list: (args: ListArgs, scope: string) => string;
   forget: (args: ForgetArgs, scope: string) => string;
@@ -38,7 +39,7 @@ export type MemoryOps = {
 
 export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
   return {
-    save: (args, scope) =>
+    save: (args, scope, source) =>
       run(() => {
         const { entry, created } = saveEntry(getDb(), {
           scope,
@@ -47,6 +48,7 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
           body: args.body,
           tags: args.tags ?? [],
           expires_at: args.expires_at ?? null,
+          ...(source !== undefined ? { source } : {}),
         });
         return `saved ${entry.id} (${entry.scope}, ${created ? "created" : "updated"})`;
       }),
@@ -190,7 +192,8 @@ export function memoryInventory(
   const lines = [INVENTORY_HEADER];
   let size = INVENTORY_HEADER.length;
   for (const entry of ordered) {
-    const line = `- [${entry.kind}] ${entry.title} (updated ${dayOf(entry.updated_at)})`;
+    const by = entry.source === undefined ? "" : `, by ${entry.source}`;
+    const line = `- [${entry.kind}] ${entry.title} (updated ${dayOf(entry.updated_at)}${by})`;
     if (size + line.length + 1 > INVENTORY_MAX_CHARS) {
       break;
     }

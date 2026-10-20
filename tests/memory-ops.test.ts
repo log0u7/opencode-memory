@@ -52,6 +52,15 @@ describe("memory ops", () => {
     close();
   });
 
+  it("records who wrote an entry and names the writer in the inventory", () => {
+    const { ops, dbPath, getDb, close } = store();
+    ops.save({ kind: "lesson", title: "check the schema first", body: "x" }, "/w", "reflection");
+
+    expect(JSON.parse(ops.list({}, "/w"))[0].source).toBe("reflection");
+    expect(memoryInventory(getDb, dbPath, "/w")).toContain("by reflection");
+    close();
+  });
+
   it("says whether a save created an entry or rewrote one", () => {
     const { ops, close } = store();
 

@@ -149,13 +149,14 @@ export function saveEntry(
 
   if (existing) {
     db.conn.run(
-      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ? WHERE id = ?",
+      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ?, source = ? WHERE id = ?",
       [
         input.kind,
         input.body,
         JSON.stringify(input.tags),
         now,
         input.expires_at ?? null,
+        input.source ?? null,
         existing.id,
       ],
     );
@@ -170,6 +171,7 @@ export function saveEntry(
         created_at: existing.created_at,
         updated_at: now,
         expires_at: input.expires_at,
+        ...(input.source !== undefined ? { source: input.source } : {}),
       },
       created: false,
     };
@@ -177,7 +179,7 @@ export function saveEntry(
 
   const id = randomUUID();
   db.conn.run(
-    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       id,
       scope,
@@ -188,6 +190,7 @@ export function saveEntry(
       now,
       now,
       input.expires_at,
+      input.source ?? null,
     ],
   );
 
@@ -202,6 +205,7 @@ export function saveEntry(
       created_at: now,
       updated_at: now,
       expires_at: input.expires_at,
+      ...(input.source !== undefined ? { source: input.source } : {}),
     },
     created: true,
   };
@@ -343,7 +347,7 @@ function removedByQuery(db: MemoryDb, target: { query: string; scope: string }):
   );
 }
 
-type Row = Omit<Entry, "tags"> & { tags: string };
+type Row = Omit<Entry, "tags" | "source"> & { tags: string; source: string | null };
 
 function rowToEntry(row: Row): Entry {
   return {
@@ -356,6 +360,7 @@ function rowToEntry(row: Row): Entry {
     created_at: row.created_at,
     updated_at: row.updated_at,
     expires_at: row.expires_at,
+    ...(row.source !== null ? { source: row.source } : {}),
   };
 }
 

@@ -127,4 +127,30 @@ describe("openMemoryDb", () => {
     expect(row?.id).toBe("e1");
     second.close();
   });
+
+  it("adds the columns introduced after a store was first created", () => {
+    const path = join(dir, "memory.db");
+    const legacy = openMemoryDb(path);
+    // A store written by an earlier release: the columns added since are not there.
+    legacy.conn.run("ALTER TABLE entries DROP COLUMN source");
+    legacy.close();
+
+    const reopened = openMemoryDb(path);
+    const columns = reopened.conn
+      .all<{ name: string }>("PRAGMA table_info(entries)")
+      .map((column) => column.name);
+    expect(columns).toContain("source");
+
+    // A row written before the migration reads back with no writer rather than failing.
+    reopened.conn.run(
+      "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ["e1", "/w", "fact", "legacy note", "written before the column existed", "[]", 1, 1, null],
+    );
+    const rows = reopened.conn.all<{ id: string; source: string | null }>(
+      "SELECT id, source FROM entries",
+    );
+    expect(rows.map((row) => row.id)).toEqual(["e1"]);
+    expect(rows[0]?.source).toBeNull();
+    reopened.close();
+  });
 });

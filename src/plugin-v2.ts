@@ -85,7 +85,7 @@ export const MemoryV2 = Plugin.define({
           required: ["kind", "title", "body"],
           additionalProperties: false,
         },
-        async execute(args) {
+        async execute(args, context) {
           const a = args as {
             kind: string;
             title: string;
@@ -95,7 +95,11 @@ export const MemoryV2 = Plugin.define({
             expires_at?: number;
           };
           return {
-            content: ops.save(a, defaultScope(undefined, a.scope ?? ctx.location.directory)),
+            content: ops.save(
+              a,
+              defaultScope(undefined, a.scope ?? ctx.location.directory),
+              context.agent,
+            ),
           };
         },
       });
@@ -230,7 +234,7 @@ export const MemoryV2 = Plugin.define({
         return result.text;
       },
       saveLesson: (title, body) => {
-        ops.save({ kind: "lesson", title, body }, projectScope);
+        ops.save({ kind: "lesson", title, body }, projectScope, "reflection");
       },
     });
     // The host keeps the event stream alive through this controller; aborting it stops

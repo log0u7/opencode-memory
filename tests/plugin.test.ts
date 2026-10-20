@@ -320,10 +320,23 @@ describe("memory plugin reflection", () => {
         ),
       ).toBe(true);
     });
+    // A distilled lesson is marked as such, so a later session can weigh it differently
+    // from one an agent wrote itself.
+    expect(list(db, { scope: WORKTREE }).find((e) => e.title === "batch updates")?.source).toBe(
+      "reflection",
+    );
     db.close();
 
     expect(client.session.create).toHaveBeenCalled();
     expect(client.session.delete).toHaveBeenCalledWith({ path: { id: "child1" } });
+  });
+
+  it("records the calling agent as the writer of an entry", async () => {
+    const tools = await loadTools({ dbPath: join(dir, "writer.db") });
+    await tools.memory_save?.execute({ kind: "fact", title: "agent note", body: "b" }, ctx());
+
+    const listed = JSON.parse((await tools.memory_list?.execute({}, ctx())) ?? "[]");
+    expect(listed[0].source).toBe("build");
   });
 
   it("aborts a hanging reflection call and still deletes the child session", async () => {

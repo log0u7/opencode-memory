@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Entries record the agent that wrote them (`source`; distilled lessons carry
+  `reflection`), the session inventory names the writer, and a store created by an earlier
+  release gains the column on open instead of failing to read.
+
 ### Security
 
 - The secret guard now refuses the token formats released since it was written: GitHub

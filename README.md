@@ -89,6 +89,7 @@ Cost per reflection: ~2k input tokens (the bounded transcript) and at most ~300 
 - `memory_forget` by query never leaves the scope it is called from, so a project cannot fuzzily delete another project's entries; by id it deletes anywhere (ids are globally unique), which keeps closed worktrees cleanable. Both forms report the titles and ids they removed.
 - `memory_save` reports whether it created an entry or rewrote the one already holding that scope and title, so a silent overwrite is visible to the model.
 - `memory_stats` reports the store size on disk and the oldest live entry next to the kind counts. The store has no size cap and no eviction, so this is the only growth signal.
+- Every entry records the agent that wrote it (`source`; distilled lessons carry `reflection`), and the session inventory names the writer, so knowledge from a sibling session or from reflection is distinguishable from what this session wrote.
 - On the first request of a session, the most recent entries are injected into the system prompt as a bounded list (titles only), so the model does not have to remember to search. `memory_search` remains the tool for deeper lookups.
 - On session compaction, the plugin lists the stored entries in the compaction context and asks the compaction prompt to emit durable decisions, so the model summarises from an inventory instead of recall.
 - Injections stay bounded (~1200 characters worst case) and nothing is injected, nor any store file created, when memory is unused.

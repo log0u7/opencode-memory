@@ -220,6 +220,25 @@ describe("store.save", () => {
     db.close();
   });
 
+  it("records who wrote an entry and keeps it through a rewrite", () => {
+    const db = openMemoryDb(":memory:");
+    const created = saveEntry(db, input({ source: "build" }));
+    const rewritten = saveEntry(db, input({ source: "plan" }), { now: Date.now() + 1 });
+
+    expect(created.entry.source).toBe("build");
+    expect(rewritten.entry.source).toBe("plan");
+    expect(list(db, { scope: "/work/project" })[0]?.source).toBe("plan");
+    db.close();
+  });
+
+  it("leaves the writer unset when the caller does not name one", () => {
+    const db = openMemoryDb(":memory:");
+    saveEntry(db, input());
+
+    expect(list(db, { scope: "/work/project" })[0]?.source).toBeUndefined();
+    db.close();
+  });
+
   it("persists a new expiry when rewriting an entry", () => {
     const db = openMemoryDb(":memory:");
     const first = save(db, input({ expires_at: Date.now() + 600_000 }));

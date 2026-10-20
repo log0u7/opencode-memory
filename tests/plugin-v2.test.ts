@@ -52,7 +52,7 @@ type AddedTool = {
   name: string;
   execute: (
     input: Record<string, unknown>,
-    context: { sessionID: string },
+    context: { sessionID: string; agent?: string },
   ) => Promise<{ content?: string }>;
 };
 
@@ -157,6 +157,23 @@ describe("v1 and v2 share one behaviour", () => {
     ).toMatch(/^deleted 1 entry: "Parity check" \([0-9a-f-]{36}\)$/);
 
     await hooks.dispose?.();
+    await cleanupV2?.();
+  });
+
+  it("records the calling agent as the writer of an entry", async () => {
+    const dbPath = tmpDbPath();
+    const { ctx, added } = fakeCtx(dbPath);
+    const cleanupV2 = await pluginModule.setup(ctx);
+    const save = added.find((t) => t.name === "memory_save");
+    const list = added.find((t) => t.name === "memory_list");
+
+    await save?.execute(
+      { kind: "fact", title: "agent note", body: "x" },
+      { sessionID: "s1", agent: "build" },
+    );
+
+    const content = (await list?.execute({}, { sessionID: "s1" }))?.content ?? "[]";
+    expect(JSON.parse(content)[0].source).toBe("build");
     await cleanupV2?.();
   });
 });

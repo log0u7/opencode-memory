@@ -11,6 +11,9 @@ export type Entry = {
   created_at: number;
   updated_at: number;
   expires_at: number | null;
+  /** Agent that wrote the entry, or `reflection` for distilled lessons. Unset on rows
+   * written before the column existed, and never on a save that does not name a writer. */
+  source?: string;
 };
 
 export type EntryInput = {
@@ -20,4 +23,5 @@ export type EntryInput = {
   body: string;
   tags: string[];
   expires_at: number | null;
+  source?: string;
 };
