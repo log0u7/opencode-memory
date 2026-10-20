@@ -20,10 +20,6 @@ interface BunSqliteDatabase {
   close(): void;
 }
 
-interface BunSqliteModule {
-  Database: new (path: string) => BunSqliteDatabase;
-}
-
 interface NodeSqliteDatabase {
   prepare(sql: string): SqliteStatement;
   exec(sql: string): unknown;
@@ -73,20 +69,20 @@ function createBunConn(db: BunSqliteDatabase): SqliteConn {
   };
 }
 
-// Open a sqlite connection with the runtime's bundled engine: bun:sqlite when
-// running inside OpenCode (Bun), node:sqlite when running under Node (tests, CI).
-export function openSqlite(path: string): SqliteConn {
-  const globalRuntime = globalThis as {
-    Bun?: { sqlite: { Database: BunSqliteModule["Database"] } };
-  };
-
-  if (globalRuntime.Bun) {
-    return createBunConn(new globalRuntime.Bun.sqlite.Database(path));
+// Open a sqlite connection with the runtime's bundled engine: bun:sqlite when running
+// inside OpenCode (Bun), node:sqlite when running under Node (tests, CI).
+// Bun 1.3 removed the Bun.sqlite global and ships the engine as the bun:sqlite module, so
+// the branch reads the runtime version and the module goes through the same createRequire
+// seam either way: the module exists in old and new Bun alike, and a bare require is not
+// defined in the ES module the plugin ships as.
+// The loader is a parameter so tests can supply the module on a runtime that lacks it.
+export function openSqlite(path: string, load: (id: string) => unknown = nodeRequire): SqliteConn {
+  if (process.versions.bun !== undefined) {
+    const { Database } = load("bun:sqlite") as BunSqliteExports;
+    return createBunConn(new Database(path));
   }
 
-  // node:sqlite ships with Node >= 22.5. createRequire keeps the load lazy for
-  // runtimes without node:sqlite: a bare require is not defined in an ES module.
-  const { DatabaseSync } = nodeRequire("node:sqlite") as NodeSqliteExports;
+  const { DatabaseSync } = load("node:sqlite") as NodeSqliteExports;
   return createPreparedConn(new DatabaseSync(path));
 }
 
@@ -94,4 +90,8 @@ const nodeRequire = createRequire(import.meta.url);
 
 interface NodeSqliteExports {
   DatabaseSync: new (path: string) => NodeSqliteDatabase;
+}
+
+interface BunSqliteExports {
+  Database: new (path: string) => BunSqliteDatabase;
 }
