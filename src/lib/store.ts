@@ -18,6 +18,13 @@ export const DEFAULT_LIMIT = { search: 10, list: 20 };
 /** Scope used when no worktree and no directory is known, so rows stay addressable. */
 export const FALLBACK_SCOPE = "/";
 
+/** How long a trashed entry stays restorable before a sweep drops it for good. A
+ * recoverable delete is worthless if the trash itself grows without bound. */
+export const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Live rows only: a trashed entry is invisible to every read until it is restored. */
+const LIVE = "deleted_at IS NULL";
+
 // High-confidence credential formats only: a generic "password =" rule would block
 // ordinary prose. Extend with care, one false positive costs a legitimate save.
 const SECRET_PATTERNS = [
@@ -113,6 +120,14 @@ export function renderEntries(entries: Entry[]): string {
 export function sweep(db: MemoryDb, options: { now?: number } = {}): number {
   const now = options.now ?? Date.now();
   db.conn.run("DELETE FROM entries WHERE expires_at IS NOT NULL AND expires_at <= ?", [now]);
+  const expired = changesOf(db);
+  db.conn.run("DELETE FROM entries WHERE deleted_at IS NOT NULL AND deleted_at <= ?", [
+    now - TRASH_RETENTION_MS,
+  ]);
+  return expired + changesOf(db);
+}
+
+function changesOf(db: MemoryDb): number {
   return db.conn.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
 }
 
@@ -143,7 +158,7 @@ export function saveEntry(
   // concurrent saves of the same title can both insert. Ceiling is a rare duplicate, not
   // data loss. Upgrade path: a normalized key column plus BEGIN IMMEDIATE.
   const existing = db.conn.get<{ id: string; created_at: number }>(
-    "SELECT id, created_at FROM entries WHERE scope = ? AND lower(trim(title)) = ?",
+    `SELECT id, created_at FROM entries WHERE scope = ? AND lower(trim(title)) = ? AND ${LIVE}`,
     [scope, input.title.trim().toLowerCase()],
   );
 
@@ -249,7 +264,7 @@ function ftsHits(db: MemoryDb, match: string, scope: string, now: number, limit:
     .all<Row>(
       `SELECT e.* FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid
        WHERE entries_fts MATCH ? AND (e.scope = ? OR e.scope = 'global')
-         AND (e.expires_at IS NULL OR e.expires_at > ?)
+         AND (e.expires_at IS NULL OR e.expires_at > ?) AND e.${LIVE}
        ORDER BY bm25(entries_fts) ASC, e.updated_at DESC
        LIMIT ?`,
       [match, scope, now, limit],
@@ -271,6 +286,7 @@ export function list(
     .all<Row>(
       `SELECT * FROM entries
        WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?) ${kindFilter}
+         AND ${LIVE}
        ORDER BY updated_at DESC, id ASC
        LIMIT ?`,
       [scope, now, ...kindArgs, limit],
@@ -289,7 +305,7 @@ export function stats(
   const now = query.now ?? Date.now();
   return db.conn.all<{ kind: string; count: number }>(
     `SELECT kind, COUNT(*) AS count FROM entries
-     WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?)
+     WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?) AND ${LIVE}
      GROUP BY kind ORDER BY count DESC, kind ASC`,
     [scope, now],
   );
@@ -303,7 +319,7 @@ export function oldestCreated(db: MemoryDb, query: { scope: string; now?: number
   const now = query.now ?? Date.now();
   const row = db.conn.get<{ oldest: number | null }>(
     `SELECT MIN(created_at) AS oldest FROM entries
-     WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?)`,
+     WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?) AND ${LIVE}`,
     [scope, now],
   );
   return row?.oldest ?? null;
@@ -314,40 +330,64 @@ export function oldestCreated(db: MemoryDb, query: { scope: string; now?: number
  * must never silently hit other projects' entries. Id deletes are machine-wide because
  * the id is globally unique: closed worktrees stay cleanable from any project.
  *
- * The removed entries come back, not a count: a broad query can take many rows at once,
- * and the caller has to be able to say which ones.
+ * Both forms trash instead of dropping, so a wrong delete is recoverable, and both report
+ * the entries they moved: a broad query can take many rows at once, and the caller has to
+ * be able to say which ones. Only live rows count, so a second delete of the same target
+ * is a no-op.
  */
 export function forget(db: MemoryDb, target: ForgetTarget): Entry[] {
-  const removed =
+  const trashed =
     "id" in target
-      ? db.conn.all<Row>("SELECT * FROM entries WHERE id = ?", [target.id])
-      : removedByQuery(db, target);
+      ? db.conn.all<Row>(`SELECT * FROM entries WHERE id = ? AND ${LIVE}`, [target.id])
+      : trashedByQuery(db, target);
 
-  if (removed.length === 0) {
+  if (trashed.length === 0) {
     return [];
   }
-  const ids = removed.map((row) => row.id);
-  db.conn.run(`DELETE FROM entries WHERE id IN (${ids.map(() => "?").join(", ")})`, ids);
-  return removed.map(rowToEntry);
+  const now = Date.now();
+  const ids = trashed.map((row) => row.id);
+  db.conn.run(`UPDATE entries SET deleted_at = ? WHERE id IN (${ids.map(() => "?").join(", ")})`, [
+    now,
+    ...ids,
+  ]);
+  return trashed.map(rowToEntry);
 }
 
-function removedByQuery(db: MemoryDb, target: { query: string; scope: string }): Row[] {
+/** Puts a trashed entry back into every read. Machine-wide by id, mirroring the delete it
+ * undoes; `null` when the id is not in the trash. */
+export function restore(db: MemoryDb, target: { id: string }): Entry | null {
+  const row = db.conn.get<Row>(`SELECT * FROM entries WHERE id = ? AND deleted_at IS NOT NULL`, [
+    target.id,
+  ]);
+  if (row === null) {
+    return null;
+  }
+  db.conn.run("UPDATE entries SET deleted_at = NULL WHERE id = ?", [target.id]);
+  return rowToEntry(row);
+}
+
+function trashedByQuery(db: MemoryDb, target: { query: string; scope: string }): Row[] {
   const scope = canonicalScope(target.scope);
 
   // Deleting is precision-first: only the strict all-token match, never the fuzzy
-  // fallback. A wrong read costs the model a retry, a wrong delete is unrecoverable.
+  // fallback. A wrong read costs the model a retry, a wrong delete used to be
+  // unrecoverable; it now costs a restore.
   const match = strictMatch(target.query);
   if (match === null) {
     return [];
   }
   return db.conn.all<Row>(
     `SELECT e.* FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid
-     WHERE entries_fts MATCH ? AND (e.scope = ? OR e.scope = 'global')`,
+     WHERE entries_fts MATCH ? AND (e.scope = ? OR e.scope = 'global') AND e.${LIVE}`,
     [match, scope],
   );
 }
 
-type Row = Omit<Entry, "tags" | "source"> & { tags: string; source: string | null };
+type Row = Omit<Entry, "tags" | "source"> & {
+  tags: string;
+  source: string | null;
+  deleted_at: number | null;
+};
 
 function rowToEntry(row: Row): Entry {
   return {

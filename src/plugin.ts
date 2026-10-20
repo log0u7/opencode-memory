@@ -226,6 +226,14 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
         execute: async (args, context) =>
           ops.stats(defaultScope(args.scope ?? context.worktree ?? context.directory)),
       }),
+
+      memory_restore: tool({
+        description: TOOL_DESCRIPTIONS.restore,
+        args: {
+          id: tool.schema.string().describe("Id of a trashed entry to put back"),
+        },
+        execute: async (args) => ops.restore(args),
+      }),
     },
   };
 

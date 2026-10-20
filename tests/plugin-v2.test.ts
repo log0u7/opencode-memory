@@ -179,7 +179,7 @@ describe("v1 and v2 share one behaviour", () => {
 });
 
 describe("opencode-memory v2 setup", () => {
-  it("registers the five memory tools", async () => {
+  it("registers the six memory tools", async () => {
     const dbPath = tmpDbPath();
     const { ctx, added } = fakeCtx(dbPath);
 
@@ -188,6 +188,7 @@ describe("opencode-memory v2 setup", () => {
     expect(names).toEqual([
       "memory_forget",
       "memory_list",
+      "memory_restore",
       "memory_save",
       "memory_search",
       "memory_stats",

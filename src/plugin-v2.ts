@@ -182,6 +182,23 @@ export const MemoryV2 = Plugin.define({
           return { content: ops.stats(defaultScope(undefined, a.scope ?? ctx.location.directory)) };
         },
       });
+
+      editor.add({
+        name: "memory_restore",
+        description: TOOL_DESCRIPTIONS.restore,
+        input: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Id of a trashed entry to put back" },
+          },
+          required: ["id"],
+          additionalProperties: false,
+        },
+        async execute(args) {
+          const a = args as { id: string };
+          return { content: ops.restore(a) };
+        },
+      });
     });
 
     // The v1 system transform maps to the v2 context hook: guidance first, then the

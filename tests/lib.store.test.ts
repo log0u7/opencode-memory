@@ -15,11 +15,14 @@ import {
   list,
   MAX_LIMIT,
   renderEntries,
+  restore,
   save,
   saveEntry,
   search,
   SecretDetectedError,
   sweep,
+  stats,
+  TRASH_RETENTION_MS,
 } from "../src/lib/store.js";
 import type { EntryInput } from "../src/types/entry.js";
 
@@ -591,6 +594,85 @@ describe("store rendering", () => {
     const db = openMemoryDb(":memory:");
     const entries = [save(db, input())];
     expect(renderEntries(entries)).not.toContain("\n");
+    db.close();
+  });
+});
+
+describe("store trash", () => {
+  it("keeps a forgotten entry out of every read until it is restored", () => {
+    const db = openMemoryDb(":memory:");
+    const entry = save(db, input({ title: "postgres batching", tags: [] }));
+
+    expect(forget(db, { query: "postgres", scope: "/work/project" })).toHaveLength(1);
+    expect(list(db, { scope: "/work/project" })).toEqual([]);
+    expect(search(db, { query: "postgres", scope: "/work/project" })).toEqual([]);
+    expect(stats(db, { scope: "/work/project" })).toEqual([]);
+
+    expect(restore(db, { id: entry.id })?.id).toBe(entry.id);
+    expect(list(db, { scope: "/work/project" })).toHaveLength(1);
+    expect(search(db, { query: "postgres", scope: "/work/project" })).toHaveLength(1);
+    expect(stats(db, { scope: "/work/project" })).toHaveLength(1);
+    db.close();
+  });
+
+  it("restores by id across scopes, mirroring the delete it undoes", () => {
+    const db = openMemoryDb(":memory:");
+    const foreign = save(db, input({ title: "postgres replica", scope: "/work/other", tags: [] }));
+
+    forget(db, { id: foreign.id, scope: "/work/project" });
+    expect(list(db, { scope: "/work/other" })).toEqual([]);
+
+    expect(restore(db, { id: foreign.id })?.id).toBe(foreign.id);
+    expect(list(db, { scope: "/work/other" })).toHaveLength(1);
+    db.close();
+  });
+
+  it("returns nothing when the id is not in the trash", () => {
+    const db = openMemoryDb(":memory:");
+    const entry = save(db, input());
+
+    expect(restore(db, { id: entry.id })).toBeNull();
+    expect(restore(db, { id: "missing" })).toBeNull();
+    db.close();
+  });
+
+  it("trashes an entry only once", () => {
+    const db = openMemoryDb(":memory:");
+    const entry = save(db, input({ title: "postgres batching", tags: [] }));
+
+    expect(forget(db, { id: entry.id, scope: "/work/project" })).toHaveLength(1);
+    expect(forget(db, { id: entry.id, scope: "/work/project" })).toEqual([]);
+    db.close();
+  });
+
+  it("keeps a forgotten title from blocking a new save on the same scope", () => {
+    const db = openMemoryDb(":memory:");
+    const first = save(db, input({ title: "postgres batching", tags: [], body: "old body" }));
+    forget(db, { id: first.id, scope: "/work/project" });
+
+    const second = save(db, input({ title: "postgres batching", tags: [], body: "new body" }));
+
+    // Without the dedup lookup skipping trashed rows, the rewrite would resurrect a
+    // tombstone that stays invisible and shadows the title forever.
+    expect(second.id).not.toBe(first.id);
+    expect(second.body).toBe("new body");
+    expect(list(db, { scope: "/work/project" }).map((e) => e.id)).toEqual([second.id]);
+    db.close();
+  });
+
+  it("hard-deletes trash older than the retention window and keeps fresh trash", () => {
+    const db = openMemoryDb(":memory:");
+    const rotted = save(db, input({ title: "old note", tags: [] }), { now: 1000 });
+    const fresh = save(db, input({ title: "new note", tags: [] }), { now: 1000 });
+    forget(db, { id: rotted.id, scope: "/work/project" });
+    forget(db, { id: fresh.id, scope: "/work/project" });
+    // Age the first tombstone past the window without waiting for it.
+    db.conn.run("UPDATE entries SET deleted_at = 1 WHERE id = ?", [rotted.id]);
+
+    sweep(db, { now: TRASH_RETENTION_MS + 2 });
+
+    expect(restore(db, { id: rotted.id })).toBeNull();
+    expect(restore(db, { id: fresh.id })?.id).toBe(fresh.id);
     db.close();
   });
 });

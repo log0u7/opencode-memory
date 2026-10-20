@@ -52,6 +52,19 @@ describe("memory ops", () => {
     close();
   });
 
+  it("restores a trashed entry by id", () => {
+    const { ops, close } = store();
+    const saved = ops.save({ kind: "fact", title: "trash me", body: "x" }, "/w");
+    const id = saved.split(" ")[1] ?? "";
+
+    expect(ops.forget({ id }, "/w")).toMatch(/^deleted 1 entry: "trash me" \(/);
+    expect(ops.list({}, "/w")).toBe("no memory entries");
+    expect(ops.restore({ id })).toMatch(/^restored "trash me" \(/);
+    expect(ops.list({}, "/w")).toContain("trash me");
+    expect(ops.restore({ id: "missing" })).toBe("no entry with that id");
+    close();
+  });
+
   it("records who wrote an entry and names the writer in the inventory", () => {
     const { ops, dbPath, getDb, close } = store();
     ops.save({ kind: "lesson", title: "check the schema first", body: "x" }, "/w", "reflection");

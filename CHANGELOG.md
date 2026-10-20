@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `memory_restore` puts a trashed entry back by id, wherever it lived. `memory_forget` now
+  trashes instead of dropping, so a wrong delete is recoverable; a sweep hard-deletes trash
+  older than 30 days so the trash cannot grow without bound.
 - Entries record the agent that wrote them (`source`; distilled lessons carry
   `reflection`), the session inventory names the writer, and a store created by an earlier
   release gains the column on open instead of failing to read.

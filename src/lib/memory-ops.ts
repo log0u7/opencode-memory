@@ -6,6 +6,7 @@ import {
   list,
   oldestCreated,
   renderEntries,
+  restore,
   saveEntry,
   search,
   SecretDetectedError,
@@ -26,6 +27,7 @@ export type SaveArgs = {
 export type SearchArgs = { query: string; limit?: number | undefined };
 export type ListArgs = { limit?: number | undefined };
 export type ForgetArgs = { id?: string | undefined; query?: string | undefined };
+export type RestoreArgs = { id: string };
 
 /** One shared behaviour behind both plugin entry points. Every operation returns the
  * model-facing text directly, so a caller cannot bypass caps or error handling. */
@@ -35,6 +37,7 @@ export type MemoryOps = {
   list: (args: ListArgs, scope: string) => string;
   forget: (args: ForgetArgs, scope: string) => string;
   stats: (scope: string) => string;
+  restore: (args: RestoreArgs) => string;
 };
 
 export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
@@ -100,6 +103,13 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
           .map((row) => `${row.kind}: ${row.count}`)
           .join(", ")}, total: ${total}`;
       }),
+    restore: (args) =>
+      run(() => {
+        const entry = restore(getDb(), { id: args.id });
+        return entry === null
+          ? "no entry with that id"
+          : `restored ${JSON.stringify(entry.title)} (${entry.id})`;
+      }),
   };
 }
 
@@ -135,6 +145,8 @@ export const TOOL_DESCRIPTIONS = {
     "Delete memory entries by id (any scope: ids are globally unique), or all entries matching a query. Query deletes stay inside this project's scope (plus global entries); an entry saved under another scope needs its id, or that scope, to be removed.",
   stats:
     "Count memory entries by kind for this project (plus global entries), with a total. Use it to see how much memory already exists, for example how many lessons reflection has written.",
+  restore:
+    "Put a trashed entry back, by id. Deletes are recoverable: memory_forget reports the ids it trashed, and memory_restore brings one of them back. An entry stays restorable for 30 days.",
 } as const;
 
 /**
