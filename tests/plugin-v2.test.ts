@@ -52,7 +52,7 @@ type AddedTool = {
   name: string;
   execute: (
     input: Record<string, unknown>,
-    context: { sessionID: string },
+    context: { sessionID: string; agent?: string },
   ) => Promise<{ content?: string }>;
 };
 
@@ -127,8 +127,13 @@ describe("v1 and v2 share one behaviour", () => {
     };
 
     const saveArgs = { kind: "decision", title: "Parity check", body: "same behaviour" };
-    expect(await v1.memory_save?.execute(saveArgs, v1Scope)).toBe(
-      (await v2.get("memory_save")?.execute(saveArgs, { sessionID: "s1" }))?.content,
+    // Same shape from both hosts; the receipt differs because the second save rewrites
+    // the row the first one created, which is exactly what the receipt reports.
+    expect(await v1.memory_save?.execute(saveArgs, v1Scope)).toMatch(
+      /^saved [0-9a-f-]{36} \(\/home\/u\/project, created\)$/,
+    );
+    expect((await v2.get("memory_save")?.execute(saveArgs, { sessionID: "s1" }))?.content).toMatch(
+      /^saved [0-9a-f-]{36} \(\/home\/u\/project, updated\)$/,
     );
 
     const searchArgs = { query: "parity" };
@@ -140,22 +145,41 @@ describe("v1 and v2 share one behaviour", () => {
     );
 
     const forgetArgs = { query: "parity" };
-    expect(await v1.memory_forget?.execute(forgetArgs, v1Scope)).toBe("deleted 1 entry");
-    // Recreate through the other host so both sides forget from the same state.
-    expect(
-      (await v2.get("memory_save")?.execute(saveArgs, { sessionID: "s1" }))?.content,
-    ).toContain("saved");
-    expect((await v2.get("memory_forget")?.execute(forgetArgs, { sessionID: "s1" }))?.content).toBe(
-      "deleted 1 entry",
+    expect(await v1.memory_forget?.execute(forgetArgs, v1Scope)).toMatch(
+      /^deleted 1 entry: "Parity check" \([0-9a-f-]{36}\)$/,
     );
+    // Recreate through the other host so both sides forget from the same state.
+    expect((await v2.get("memory_save")?.execute(saveArgs, { sessionID: "s1" }))?.content).toMatch(
+      /^saved [0-9a-f-]{36} \(\/home\/u\/project, created\)$/,
+    );
+    expect(
+      (await v2.get("memory_forget")?.execute(forgetArgs, { sessionID: "s1" }))?.content,
+    ).toMatch(/^deleted 1 entry: "Parity check" \([0-9a-f-]{36}\)$/);
 
     await hooks.dispose?.();
+    await cleanupV2?.();
+  });
+
+  it("records the calling agent as the writer of an entry", async () => {
+    const dbPath = tmpDbPath();
+    const { ctx, added } = fakeCtx(dbPath);
+    const cleanupV2 = await pluginModule.setup(ctx);
+    const save = added.find((t) => t.name === "memory_save");
+    const list = added.find((t) => t.name === "memory_list");
+
+    await save?.execute(
+      { kind: "fact", title: "agent note", body: "x" },
+      { sessionID: "s1", agent: "build" },
+    );
+
+    const content = (await list?.execute({}, { sessionID: "s1" }))?.content ?? "[]";
+    expect(JSON.parse(content)[0].source).toBe("build");
     await cleanupV2?.();
   });
 });
 
 describe("opencode-memory v2 setup", () => {
-  it("registers the five memory tools", async () => {
+  it("registers the six memory tools", async () => {
     const dbPath = tmpDbPath();
     const { ctx, added } = fakeCtx(dbPath);
 
@@ -164,6 +188,7 @@ describe("opencode-memory v2 setup", () => {
     expect(names).toEqual([
       "memory_forget",
       "memory_list",
+      "memory_restore",
       "memory_save",
       "memory_search",
       "memory_stats",

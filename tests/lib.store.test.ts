@@ -15,10 +15,14 @@ import {
   list,
   MAX_LIMIT,
   renderEntries,
+  restore,
   save,
+  saveEntry,
   search,
   SecretDetectedError,
   sweep,
+  stats,
+  TRASH_RETENTION_MS,
 } from "../src/lib/store.js";
 import type { EntryInput } from "../src/types/entry.js";
 
@@ -66,7 +70,7 @@ describe("store.save", () => {
     expect(() => save(db, input({ body: "aws key AKIAABCDEFGHIJKLMNOP in notes" }))).toThrow(
       SecretDetectedError,
     );
-    expect(() => save(db, input({ body: "gitlab token glpat-abcdefghijklmnopqrst" }))).toThrow(
+    expect(() => save(db, input({ body: "gitlab token glpat-A1A1A1A1A1A1A1A1A1A1" }))).toThrow(
       SecretDetectedError,
     );
     expect(() =>
@@ -89,6 +93,128 @@ describe("store.save", () => {
     db.close();
   });
 
+  it("rejects credentials in the token formats released since the first patterns", () => {
+    const db = openMemoryDb(":memory:");
+    // GitHub fine-grained PAT: the current default, not covered by the ghp_ class.
+    expect(() =>
+      save(
+        db,
+        input({
+          body: "pat github_pat_11AAAA7Yk3mQ0abcdefghijklmnopqrstuvwxyz0123456789ABCDEF for ci",
+        }),
+      ),
+    ).toThrow(SecretDetectedError);
+    // GitHub OAuth and server-to-server classes.
+    expect(() =>
+      save(db, input({ body: "oauth gho_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })),
+    ).toThrow(SecretDetectedError);
+    expect(() =>
+      save(db, input({ body: "deploy ghs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })),
+    ).toThrow(SecretDetectedError);
+    // GitLab rotate token, npm granular token, AWS temporary id, Google OAuth token.
+    expect(() => save(db, input({ body: "rotate glrt-A1A1A1A1A1A1A1A1A1A1" }))).toThrow(
+      SecretDetectedError,
+    );
+    expect(() =>
+      save(db, input({ body: `npm token npm_${"a".repeat(36)} in the workflow` })),
+    ).toThrow(SecretDetectedError);
+    expect(() => save(db, input({ body: "temp aws ASIAABCDEFGHIJKLMNOP in notes" }))).toThrow(
+      SecretDetectedError,
+    );
+    expect(() =>
+      save(
+        db,
+        input({
+          body: "google ya29.a0AfH6SBBcxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx in notes",
+        }),
+      ),
+    ).toThrow(SecretDetectedError);
+    // A webhook URL is a credential by itself.
+    expect(() =>
+      save(
+        db,
+        input({
+          body: "hook https://hooks.slack.com/services/T00000000/B00000000/abcdefghijklmnop",
+        }),
+      ),
+    ).toThrow(SecretDetectedError);
+    db.close();
+  });
+
+  it("accepts prose that merely contains a token-like run after a prefix", () => {
+    const db = openMemoryDb(":memory:");
+    // The widened patterns whose tail class allows `_` or `-` would otherwise refuse an
+    // ordinary sentence written as one long token, and a refused save costs the model a
+    // retry it cannot explain. The GitLab fixture repeats a word on purpose: a run of
+    // distinct characters long enough to match is also what secret scanners read as a
+    // real token, and this one is prose.
+    expect(() =>
+      save(db, input({ body: "never commit github_pat_style_tokens_they_are_rotated_quarterly" })),
+    ).not.toThrow();
+    expect(() =>
+      save(db, input({ body: "rotate the glrt-aaaa-aaaa-aaaa-aaaa-aaaa token every quarter" })),
+    ).not.toThrow();
+    expect(() =>
+      save(db, input({ body: "the ya29.some-really-long-identifier-in-prose is not a token" })),
+    ).not.toThrow();
+    // The real formats still are. The GitLab and Google cases are covered above, so only
+    // the fine-grained PAT is repeated here.
+    expect(() =>
+      save(
+        db,
+        input({
+          body: "pat github_pat_11AAAA7Yk3mQ0abcdefghijklmnopqrstuvwxyz0123456789ABCDEF for ci",
+        }),
+      ),
+    ).toThrow(SecretDetectedError);
+    db.close();
+  });
+
+  it("keeps refusing a token-like run that carries a digit or an uppercase", () => {
+    const db = openMemoryDb(":memory:");
+    // The lookahead forgives lowercase prose only, and it scans the whole tail: a digit
+    // anywhere in the run, including past the minimum length, still refuses.
+    expect(() =>
+      save(db, input({ body: "never commit github_pat_rotate_tokens_every_90_days" })),
+    ).toThrow(SecretDetectedError);
+    expect(() =>
+      save(db, input({ body: `github_pat_${"a".repeat(22)}9 tail past the minimum` })),
+    ).toThrow(SecretDetectedError);
+    // A digit outside the run does not count, because the lookahead cannot cross a space.
+    expect(() =>
+      save(db, input({ body: `github_pat_${"a".repeat(22)} and then 1234567890` })),
+    ).not.toThrow();
+    // The GitLab and Google classes contain "-", so their lookahead crosses a hyphen
+    // inside the run; the GitHub class does not, which is the only asymmetry between the
+    // three and the reason the hyphenated case below is refused there but not here.
+    expect(() => save(db, input({ body: "rotate glrt-aaaa-aaaa-aaaa-aaaa-9" }))).toThrow(
+      SecretDetectedError,
+    );
+    expect(() => save(db, input({ body: "ya29.some-really-long-identifier-in-prose-2" }))).toThrow(
+      SecretDetectedError,
+    );
+    // Past the minimum length, the greedy quantifier swallows the whole run, so a digit
+    // out there still refuses. Only github_pat_ had this case before.
+    expect(() =>
+      save(db, input({ body: `glrt-${"a".repeat(20)}9 tail past the minimum` })),
+    ).toThrow(SecretDetectedError);
+    expect(() =>
+      save(db, input({ body: `ya29.${"a".repeat(20)}9 tail past the minimum` })),
+    ).toThrow(SecretDetectedError);
+    db.close();
+  });
+
+  it("leaves the older patterns with the shape they always had", () => {
+    const db = openMemoryDb(":memory:");
+    // sk-, AIza and xox[ap]- were not widened, so they keep refusing a hyphenated prose
+    // run. Widening them is a separate decision, and the comment above the patterns says
+    // so; this test pins that scope-out so it cannot drift silently.
+    expect(() => save(db, input({ body: "sk-ant-ant-ant-ant-ant-ant-ant-ant-ant" }))).toThrow(
+      SecretDetectedError,
+    );
+    db.close();
+  });
+
   it("accepts normal prose that merely mentions secrets", () => {
     const db = openMemoryDb(":memory:");
     expect(() =>
@@ -101,6 +227,14 @@ describe("store.save", () => {
     ).not.toThrow();
     expect(() =>
       save(db, input({ body: "the docs mention sk- keys and AKIA ids as examples of formats" })),
+    ).not.toThrow();
+    expect(() =>
+      save(
+        db,
+        input({
+          body: "the docs list gho_, github_pat_, glrt-, npm_ and ya29. as token formats to redact",
+        }),
+      ),
     ).not.toThrow();
     db.close();
   });
@@ -148,6 +282,37 @@ describe("store.save", () => {
     expect(second.created_at).toBe(first.created_at);
     expect(second.updated_at).toBeGreaterThan(first.updated_at);
     expect(list(db, { scope: "/work/project" })).toHaveLength(1);
+    db.close();
+  });
+
+  it("tells a fresh save apart from a rewrite, so a caller can report it", () => {
+    const db = openMemoryDb(":memory:");
+    const created = saveEntry(db, input({ body: "batches of 1000" }));
+    const rewritten = saveEntry(db, input({ body: "batches of 500" }), { now: Date.now() + 1 });
+
+    expect(created.created).toBe(true);
+    expect(rewritten.created).toBe(false);
+    expect(rewritten.entry.id).toBe(created.entry.id);
+    expect(saveEntry).toBeTypeOf("function");
+    db.close();
+  });
+
+  it("records who wrote an entry and keeps it through a rewrite", () => {
+    const db = openMemoryDb(":memory:");
+    const created = saveEntry(db, input({ source: "build" }));
+    const rewritten = saveEntry(db, input({ source: "plan" }), { now: Date.now() + 1 });
+
+    expect(created.entry.source).toBe("build");
+    expect(rewritten.entry.source).toBe("plan");
+    expect(list(db, { scope: "/work/project" })[0]?.source).toBe("plan");
+    db.close();
+  });
+
+  it("leaves the writer unset when the caller does not name one", () => {
+    const db = openMemoryDb(":memory:");
+    saveEntry(db, input());
+
+    expect(list(db, { scope: "/work/project" })[0]?.source).toBeUndefined();
     db.close();
   });
 
@@ -273,6 +438,56 @@ describe("store.search", () => {
     db.close();
   });
 
+  it("fills the remaining slots with prefix matches after the strict ones", () => {
+    const db = openMemoryDb(":memory:");
+    // The default fixture tags and body carry "postgres", so the fixtures here control
+    // their own tokens.
+    const strictOne = save(
+      db,
+      input({ tags: [], title: "postgres migration plan", body: "phased rollout" }),
+    );
+    const strictTwo = save(
+      db,
+      input({ tags: [], title: "postgres migration rollback", body: "safe rollback" }),
+    );
+    const looseOne = save(db, input({ tags: [], title: "postgresql tuning", body: "buffers" }));
+    const looseTwo = save(db, input({ tags: [], title: "migrations checklist", body: "steps" }));
+
+    const hits = search(db, { query: "postgres migration", scope: "/work/project" });
+
+    // Every match comes back, strict ones first, each entry exactly once.
+    expect(hits).toHaveLength(4);
+    expect(
+      hits
+        .slice(0, 2)
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual([strictOne.id, strictTwo.id].sort());
+    expect(
+      hits
+        .slice(2)
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual([looseOne.id, looseTwo.id].sort());
+    expect(new Set(hits.map((e) => e.id)).size).toBe(4);
+    db.close();
+  });
+
+  it("keeps the strict matches when the limit is smaller than the fused set", () => {
+    const db = openMemoryDb(":memory:");
+    save(db, input({ tags: [], title: "postgres migration plan", body: "phased rollout" }));
+    save(db, input({ tags: [], title: "postgres migration rollback", body: "safe rollback" }));
+    save(db, input({ tags: [], title: "postgresql tuning", body: "buffers" }));
+
+    const hits = search(db, { query: "postgres migration", scope: "/work/project", limit: 2 });
+
+    expect(hits.map((e) => e.title).sort()).toEqual([
+      "postgres migration plan",
+      "postgres migration rollback",
+    ]);
+    db.close();
+  });
+
   it("returns nothing instead of failing on an empty query", () => {
     const db = openMemoryDb(":memory:");
     save(db, input({ title: "postgres migration" }));
@@ -310,13 +525,14 @@ describe("store.list", () => {
 });
 
 describe("store.forget", () => {
-  it("deletes by id and by query, returning deleted count", () => {
+  it("deletes by id and by query, returning the deleted entries", () => {
     const db = openMemoryDb(":memory:");
     const e1 = save(db, input());
     save(db, input({ title: "another postgres thing" }));
 
-    expect(forget(db, { id: e1.id, scope: "/work/project" })).toBe(1);
-    expect(forget(db, { query: "postgres", scope: "/work/project" })).toBe(1);
+    expect(forget(db, { id: e1.id, scope: "/work/project" }).map((e) => e.id)).toEqual([e1.id]);
+    const byQuery = forget(db, { query: "postgres", scope: "/work/project" });
+    expect(byQuery.map((e) => e.title)).toEqual(["another postgres thing"]);
     expect(list(db, { scope: "/work/project" })).toEqual([]);
     db.close();
   });
@@ -326,7 +542,7 @@ describe("store.forget", () => {
     save(db, input({ title: "postgres batching", scope: "/work/project" }));
     save(db, input({ title: "postgres container", scope: "/work/other" }));
 
-    expect(forget(db, { query: "postgres", scope: "/work/project" })).toBe(1);
+    expect(forget(db, { query: "postgres", scope: "/work/project" })).toHaveLength(1);
     expect(list(db, { scope: "/work/other" })).toHaveLength(1);
     db.close();
   });
@@ -335,7 +551,7 @@ describe("store.forget", () => {
     const db = openMemoryDb(":memory:");
     const zombie = save(db, input({ title: "zombie note", scope: "/old/worktree" }));
 
-    expect(forget(db, { id: zombie.id, scope: "/work/project" })).toBe(1);
+    expect(forget(db, { id: zombie.id, scope: "/work/project" })).toHaveLength(1);
     expect(list(db, { scope: "/old/worktree" })).toEqual([]);
     db.close();
   });
@@ -345,7 +561,7 @@ describe("store.forget", () => {
     save(db, input({ title: "postgres tuning", scope: "global" }));
     save(db, input({ title: "postgres sharding", scope: "/work/other" }));
 
-    expect(forget(db, { query: "postgres", scope: "/work/project" })).toBe(1);
+    expect(forget(db, { query: "postgres", scope: "/work/project" })).toHaveLength(1);
     expect(list(db, { scope: "/work/project" })).toEqual([]);
     expect(list(db, { scope: "/work/other" })).toHaveLength(1);
     db.close();
@@ -355,18 +571,18 @@ describe("store.forget", () => {
     const db = openMemoryDb(":memory:");
     const foreign = save(db, input({ title: "postgres replica", scope: "/work/other" }));
 
-    expect(forget(db, { id: foreign.id, scope: "/work/project" })).toBe(1);
+    expect(forget(db, { id: foreign.id, scope: "/work/project" })).toHaveLength(1);
     expect(list(db, { scope: "/work/other" })).toEqual([]);
     db.close();
   });
 
-  it("reports zero when neither id nor query matches anything", () => {
+  it("reports nothing when neither id nor query matches anything", () => {
     const db = openMemoryDb(":memory:");
     save(db, input({ title: "postgres batching" }));
 
-    expect(forget(db, { query: "zebra qux", scope: "/work/project" })).toBe(0);
-    expect(forget(db, { query: "   ", scope: "/work/project" })).toBe(0);
-    expect(forget(db, { id: "missing", scope: "/work/project" })).toBe(0);
+    expect(forget(db, { query: "zebra qux", scope: "/work/project" })).toEqual([]);
+    expect(forget(db, { query: "   ", scope: "/work/project" })).toEqual([]);
+    expect(forget(db, { id: "missing", scope: "/work/project" })).toEqual([]);
     expect(list(db, { scope: "/work/project" })).toHaveLength(1);
     db.close();
   });
@@ -376,10 +592,31 @@ describe("store.forget", () => {
     save(db, input({ title: "postgres batching" }));
     save(db, input({ title: "docker compose" }));
 
-    expect(forget(db, { query: "postgres batching", scope: "/work/project" })).toBe(1);
+    expect(forget(db, { query: "postgres batching", scope: "/work/project" })).toHaveLength(1);
     // "batch" is only a prefix of the stored tokens: the fuzzy fallback would match,
     // and a destructive path must never use it.
-    expect(forget(db, { query: "batch", scope: "/work/project" })).toBe(0);
+    expect(forget(db, { query: "batch", scope: "/work/project" })).toEqual([]);
+    expect(list(db, { scope: "/work/project" }).map((e) => e.title)).toEqual(["docker compose"]);
+    db.close();
+  });
+
+  it("returns every entry a query delete removed, not just the first", () => {
+    const db = openMemoryDb(":memory:");
+    // The default fixture tags carry "postgres", and tags are indexed: keep them out of
+    // the way so the query matches on the title alone.
+    const note = { tags: ["db"] };
+    save(db, input({ ...note, title: "postgres batching", body: "batches" }));
+    save(db, input({ ...note, title: "postgres replica", body: "replicas" }));
+    save(db, input({ ...note, title: "postgres tuning", body: "tuning" }));
+    save(db, input({ ...note, title: "docker compose", body: "containers" }));
+
+    const deleted = forget(db, { query: "postgres", scope: "/work/project" });
+    expect(deleted.map((e) => e.title).sort()).toEqual([
+      "postgres batching",
+      "postgres replica",
+      "postgres tuning",
+    ]);
+    expect(deleted.every((e) => e.body.length > 0)).toBe(true);
     expect(list(db, { scope: "/work/project" }).map((e) => e.title)).toEqual(["docker compose"]);
     db.close();
   });
@@ -431,6 +668,85 @@ describe("store rendering", () => {
     const db = openMemoryDb(":memory:");
     const entries = [save(db, input())];
     expect(renderEntries(entries)).not.toContain("\n");
+    db.close();
+  });
+});
+
+describe("store trash", () => {
+  it("keeps a forgotten entry out of every read until it is restored", () => {
+    const db = openMemoryDb(":memory:");
+    const entry = save(db, input({ title: "postgres batching", tags: [] }));
+
+    expect(forget(db, { query: "postgres", scope: "/work/project" })).toHaveLength(1);
+    expect(list(db, { scope: "/work/project" })).toEqual([]);
+    expect(search(db, { query: "postgres", scope: "/work/project" })).toEqual([]);
+    expect(stats(db, { scope: "/work/project" })).toEqual([]);
+
+    expect(restore(db, { id: entry.id })?.id).toBe(entry.id);
+    expect(list(db, { scope: "/work/project" })).toHaveLength(1);
+    expect(search(db, { query: "postgres", scope: "/work/project" })).toHaveLength(1);
+    expect(stats(db, { scope: "/work/project" })).toHaveLength(1);
+    db.close();
+  });
+
+  it("restores by id across scopes, mirroring the delete it undoes", () => {
+    const db = openMemoryDb(":memory:");
+    const foreign = save(db, input({ title: "postgres replica", scope: "/work/other", tags: [] }));
+
+    forget(db, { id: foreign.id, scope: "/work/project" });
+    expect(list(db, { scope: "/work/other" })).toEqual([]);
+
+    expect(restore(db, { id: foreign.id })?.id).toBe(foreign.id);
+    expect(list(db, { scope: "/work/other" })).toHaveLength(1);
+    db.close();
+  });
+
+  it("returns nothing when the id is not in the trash", () => {
+    const db = openMemoryDb(":memory:");
+    const entry = save(db, input());
+
+    expect(restore(db, { id: entry.id })).toBeNull();
+    expect(restore(db, { id: "missing" })).toBeNull();
+    db.close();
+  });
+
+  it("trashes an entry only once", () => {
+    const db = openMemoryDb(":memory:");
+    const entry = save(db, input({ title: "postgres batching", tags: [] }));
+
+    expect(forget(db, { id: entry.id, scope: "/work/project" })).toHaveLength(1);
+    expect(forget(db, { id: entry.id, scope: "/work/project" })).toEqual([]);
+    db.close();
+  });
+
+  it("keeps a forgotten title from blocking a new save on the same scope", () => {
+    const db = openMemoryDb(":memory:");
+    const first = save(db, input({ title: "postgres batching", tags: [], body: "old body" }));
+    forget(db, { id: first.id, scope: "/work/project" });
+
+    const second = save(db, input({ title: "postgres batching", tags: [], body: "new body" }));
+
+    // Without the dedup lookup skipping trashed rows, the rewrite would resurrect a
+    // tombstone that stays invisible and shadows the title forever.
+    expect(second.id).not.toBe(first.id);
+    expect(second.body).toBe("new body");
+    expect(list(db, { scope: "/work/project" }).map((e) => e.id)).toEqual([second.id]);
+    db.close();
+  });
+
+  it("hard-deletes trash older than the retention window and keeps fresh trash", () => {
+    const db = openMemoryDb(":memory:");
+    const rotted = save(db, input({ title: "old note", tags: [] }), { now: 1000 });
+    const fresh = save(db, input({ title: "new note", tags: [] }), { now: 1000 });
+    forget(db, { id: rotted.id, scope: "/work/project" });
+    forget(db, { id: fresh.id, scope: "/work/project" });
+    // Age the first tombstone past the window without waiting for it.
+    db.conn.run("UPDATE entries SET deleted_at = 1 WHERE id = ?", [rotted.id]);
+
+    sweep(db, { now: TRASH_RETENTION_MS + 2 });
+
+    expect(restore(db, { id: rotted.id })).toBeNull();
+    expect(restore(db, { id: fresh.id })?.id).toBe(fresh.id);
     db.close();
   });
 });

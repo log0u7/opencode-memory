@@ -115,7 +115,7 @@ function reflectionDeps(
       }
     },
     saveLesson: (title: string, body: string) => {
-      ops.save({ kind: "lesson", title, body }, projectScope);
+      ops.save({ kind: "lesson", title, body }, projectScope, "reflection");
     },
   };
 }
@@ -165,7 +165,11 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
           expires_at: tool.schema.number().optional().describe("Optional epoch ms expiry"),
         },
         execute: async (args, context) =>
-          ops.save(args, defaultScope(args.scope ?? context.worktree ?? context.directory)),
+          ops.save(
+            args,
+            defaultScope(args.scope ?? context.worktree ?? context.directory),
+            context.agent,
+          ),
       }),
 
       memory_search: tool({
@@ -221,6 +225,14 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
         },
         execute: async (args, context) =>
           ops.stats(defaultScope(args.scope ?? context.worktree ?? context.directory)),
+      }),
+
+      memory_restore: tool({
+        description: TOOL_DESCRIPTIONS.restore,
+        args: {
+          id: tool.schema.string().describe("Id of a trashed entry to put back"),
+        },
+        execute: async (args) => ops.restore(args),
       }),
     },
   };

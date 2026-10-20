@@ -102,11 +102,12 @@ function reflectionClient(promptImpl?: unknown) {
 }
 
 describe("memory plugin tools", () => {
-  it("registers the five memory tools", async () => {
+  it("registers the six memory tools", async () => {
     const tools = await loadTools({ dbPath: join(dir, "m.db") });
     expect(Object.keys(tools).sort()).toEqual([
       "memory_forget",
       "memory_list",
+      "memory_restore",
       "memory_save",
       "memory_search",
       "memory_stats",
@@ -145,6 +146,34 @@ describe("memory plugin tools", () => {
     const all = JSON.parse(String(listed)) as Array<{ id: string }>;
     const forgotten = await tools.memory_forget?.execute({ id: all[0]?.id }, ctx());
     expect(forgotten).toContain("1");
+  });
+
+  it("trashes through memory_forget and brings the entry back with memory_restore", async () => {
+    const tools = await loadTools({ dbPath: join(dir, "trash.db") });
+
+    const saved = String(
+      await tools.memory_save?.execute(
+        { kind: "fact", title: "postgres batching", body: "uses postgres", tags: [] },
+        ctx(),
+      ),
+    );
+    const id = saved.split(" ")[1] ?? "";
+
+    expect(await tools.memory_forget?.execute({ id }, ctx())).toMatch(
+      /^deleted 1 entry: "postgres batching" \(/,
+    );
+    expect(await tools.memory_list?.execute({}, ctx())).toBe("no memory entries");
+    expect(await tools.memory_search?.execute({ query: "postgres" }, ctx())).toBe(
+      "no matching memory entries",
+    );
+
+    expect(await tools.memory_restore?.execute({ id }, ctx())).toMatch(
+      /^restored "postgres batching" \(/,
+    );
+    expect(await tools.memory_list?.execute({}, ctx())).toContain("postgres batching");
+    expect(await tools.memory_restore?.execute({ id: "missing" }, ctx())).toBe(
+      "no entry with that id",
+    );
   });
 
   it("memory_forget by query stays inside the session scope", async () => {
@@ -320,10 +349,23 @@ describe("memory plugin reflection", () => {
         ),
       ).toBe(true);
     });
+    // A distilled lesson is marked as such, so a later session can weigh it differently
+    // from one an agent wrote itself.
+    expect(list(db, { scope: WORKTREE }).find((e) => e.title === "batch updates")?.source).toBe(
+      "reflection",
+    );
     db.close();
 
     expect(client.session.create).toHaveBeenCalled();
     expect(client.session.delete).toHaveBeenCalledWith({ path: { id: "child1" } });
+  });
+
+  it("records the calling agent as the writer of an entry", async () => {
+    const tools = await loadTools({ dbPath: join(dir, "writer.db") });
+    await tools.memory_save?.execute({ kind: "fact", title: "agent note", body: "b" }, ctx());
+
+    const listed = JSON.parse((await tools.memory_list?.execute({}, ctx())) ?? "[]");
+    expect(listed[0].source).toBe("build");
   });
 
   it("aborts a hanging reflection call and still deletes the child session", async () => {

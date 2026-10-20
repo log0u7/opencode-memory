@@ -8,14 +8,14 @@
 
 Working memory for [OpenCode](https://opencode.ai): a shared SQLite store that all sessions on a machine read and write, so decisions, facts, and compaction summaries survive session boundaries.
 
-Every session gets five tools (`memory_save`, `memory_search`, `memory_list`, `memory_forget`, `memory_stats`). Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, strict match first with a prefix fallback). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
+Every session gets six tools (`memory_save`, `memory_search`, `memory_list`, `memory_forget`, `memory_stats`, `memory_restore`). Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, entries matching every query token first, then prefix matches fill the remaining slots). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
 
 ## Safety limits
 
 - Results are capped: at most 50 entries per call, and each body is rendered as a 500-character preview. A tool result has a bounded size whatever the model asks for.
 - `memory_save` rewrites an entry that repeats a scope and title instead of stacking duplicates, and purges expired rows.
-- `memory_forget` by query only deletes inside the caller's scope (plus the shared `global` scope); by id it deletes the entry wherever it lives, since ids are globally unique.
-- Entries that look like secrets (`sk-…`, `ghp_…`, `xoxb-…`) are refused, in the title, kind, body and tags alike.
+- `memory_forget` by query only deletes inside the caller's scope (plus the shared `global` scope); by id it trashes the entry wherever it lives, since ids are globally unique. Either way it reports the titles and ids it removed, so a broad query delete is auditable.
+- Entries that look like secrets (`sk-…`, `github_pat_…`, `gho_…`, `glpat-…`, `xoxb-…`, webhook URLs, …) are refused, in the title, kind, body and tags alike.
 
 ## Install
 
@@ -56,10 +56,11 @@ memory_stats()
 | Tool | Args | Description |
 |---|---|---|
 | `memory_save` | `kind`, `title`, `body`, `scope?`, `tags?`, `expires_at?` | Save an entry. Default scope is the session worktree. |
-| `memory_search` | `query`, `scope?`, `limit?` | FTS5 BM25 search; strict match first, prefix OR fallback when nothing matches. |
+| `memory_search` | `query`, `scope?`, `limit?` | FTS5 BM25 search; entries matching every query token first, then prefix matches fill the remaining slots. |
 | `memory_list` | `scope?`, `limit?` | Recent entries, newest first. |
-| `memory_forget` | `id` or `query` | Delete one entry by id, or all matching a query. |
-| `memory_stats` | `scope?` | Count entries by kind (plus global) with a total; checks how much memory exists. |
+| `memory_forget` | `id` or `query` | Trash one entry by id, or all matching a query. |
+| `memory_stats` | `scope?` | Count entries by kind (plus global) with a total, plus the store size and oldest entry. |
+| `memory_restore` | `id` | Put a trashed entry back, wherever it lived. |
 
 Entry `kind` is free-form; conventions that work well: `decision`, `fact`, `preference`, `gotcha`, `lesson`, `compaction`.
 
@@ -84,9 +85,12 @@ Cost per reflection: ~2k input tokens (the bounded transcript) and at most ~300 
 ### Notes
 
 - All sessions on the machine share one store (WAL mode, concurrent-safe).
-- Entries that look like secrets (`sk-…`, `ghp_…`, `xoxb-…`) are refused, in the title, kind, body and tags.
+- Entries that look like secrets (`sk-…`, `github_pat_…`, `gho_…`, `glpat-…`, `xoxb-…`, webhook URLs, …) are refused, in the title, kind, body and tags.
 - Every repeated `memory_save` of the same title in the same scope rewrites the entry, so the store does not grow with duplicates, and expired rows are purged on save.
-- `memory_forget` by query never leaves the scope it is called from, so a project cannot fuzzily delete another project's entries; by id it deletes anywhere (ids are globally unique), which keeps closed worktrees cleanable.
+- `memory_forget` never destroys anything: both forms move entries to a trash that `memory_restore` brings back by id, and a sweep drops trash older than 30 days. Query deletes still never leave the scope they are called from, so a project cannot fuzzily delete another project's entries, and by id they trash anywhere (ids are globally unique), which keeps closed worktrees cleanable. Both forms report the titles and ids they removed.
+- `memory_save` reports whether it created an entry or rewrote the one already holding that scope and title, so a silent overwrite is visible to the model.
+- `memory_stats` reports the store size on disk and the oldest live entry next to the kind counts. The store has no size cap and no eviction, so this is the only growth signal.
+- Every entry records the agent that wrote it (`source`; distilled lessons carry `reflection`), and the session inventory names the writer, so knowledge from a sibling session or from reflection is distinguishable from what this session wrote.
 - On the first request of a session, the most recent entries are injected into the system prompt as a bounded list (titles only), so the model does not have to remember to search. `memory_search` remains the tool for deeper lookups.
 - On session compaction, the plugin lists the stored entries in the compaction context and asks the compaction prompt to emit durable decisions, so the model summarises from an inventory instead of recall.
 - Injections stay bounded (~1200 characters worst case) and nothing is injected, nor any store file created, when memory is unused.

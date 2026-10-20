@@ -20,6 +20,7 @@ describe("smoke: plugin module", () => {
     expect(Object.keys(hooks.tool ?? {}).sort()).toEqual([
       "memory_forget",
       "memory_list",
+      "memory_restore",
       "memory_save",
       "memory_search",
       "memory_stats",

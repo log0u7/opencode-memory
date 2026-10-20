@@ -1,7 +1,18 @@
 import { existsSync } from "node:fs";
 
-import type { MemoryDb } from "./db.js";
-import { forget, list, renderEntries, save, search, SecretDetectedError, stats } from "./store.js";
+import { databaseSizeBytes, type MemoryDb } from "./db.js";
+import {
+  forget,
+  list,
+  oldestCreated,
+  renderEntries,
+  restore,
+  saveEntry,
+  search,
+  SecretDetectedError,
+  stats,
+} from "./store.js";
+import type { Entry } from "../types/entry.js";
 
 // Optional properties accept undefined explicitly: the two SDK dialects hand raw
 // tool arguments straight through, and the build enables exactOptionalPropertyTypes.
@@ -11,34 +22,38 @@ export type SaveArgs = {
   body: string;
   tags?: string[] | undefined;
   expires_at?: number | null | undefined;
+  source?: string | undefined;
 };
 export type SearchArgs = { query: string; limit?: number | undefined };
 export type ListArgs = { limit?: number | undefined };
 export type ForgetArgs = { id?: string | undefined; query?: string | undefined };
+export type RestoreArgs = { id: string };
 
 /** One shared behaviour behind both plugin entry points. Every operation returns the
  * model-facing text directly, so a caller cannot bypass caps or error handling. */
 export type MemoryOps = {
-  save: (args: SaveArgs, scope: string) => string;
+  save: (args: SaveArgs, scope: string, source?: string) => string;
   search: (args: SearchArgs, scope: string) => string;
   list: (args: ListArgs, scope: string) => string;
   forget: (args: ForgetArgs, scope: string) => string;
   stats: (scope: string) => string;
+  restore: (args: RestoreArgs) => string;
 };
 
 export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
   return {
-    save: (args, scope) =>
+    save: (args, scope, source) =>
       run(() => {
-        const entry = save(getDb(), {
+        const { entry, created } = saveEntry(getDb(), {
           scope,
           kind: args.kind,
           title: args.title,
           body: args.body,
           tags: args.tags ?? [],
           expires_at: args.expires_at ?? null,
+          ...(source !== undefined ? { source } : {}),
         });
-        return `saved ${entry.id} (${entry.scope})`;
+        return `saved ${entry.id} (${entry.scope}, ${created ? "created" : "updated"})`;
       }),
     search: (args, scope) =>
       run(() => {
@@ -59,15 +74,20 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
       }),
     forget: (args, scope) =>
       run(() => {
-        if (args.id !== undefined) {
-          const deleted = forget(getDb(), { id: args.id, scope });
-          return `deleted ${deleted} entr${deleted === 1 ? "y" : "ies"}`;
+        const removed =
+          args.id !== undefined
+            ? forget(getDb(), { id: args.id, scope })
+            : args.query !== undefined
+              ? forget(getDb(), { query: args.query, scope })
+              : null;
+        if (removed === null) {
+          return "provide id or query";
         }
-        if (args.query !== undefined) {
-          const deleted = forget(getDb(), { query: args.query, scope });
-          return `deleted ${deleted} entr${deleted === 1 ? "y" : "ies"}`;
+        if (removed.length === 0) {
+          return "deleted 0 entries";
         }
-        return "provide id or query";
+        const plural = removed.length === 1 ? "y" : "ies";
+        return `deleted ${removed.length} entr${plural}: ${renderRemoved(removed)}`;
       }),
     stats: (scope) =>
       run(() => {
@@ -76,9 +96,38 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
           return "no memory entries";
         }
         const total = counts.reduce((sum, row) => sum + row.count, 0);
-        return `${counts.map((row) => `${row.kind}: ${row.count}`).join(", ")}, total: ${total}`;
+        const oldest = oldestCreated(getDb(), { scope });
+        const size = formatBytes(databaseSizeBytes(getDb()));
+        const age = oldest === null ? "" : `, oldest: ${dayOf(oldest)}`;
+        return `store: ${size}${age}, ${counts
+          .map((row) => `${row.kind}: ${row.count}`)
+          .join(", ")}, total: ${total}`;
+      }),
+    restore: (args) =>
+      run(() => {
+        const entry = restore(getDb(), { id: args.id });
+        return entry === null
+          ? "no entry with that id"
+          : `restored ${JSON.stringify(entry.title)} (${entry.id})`;
       }),
   };
+}
+
+/** How many removed entries a delete report names before it summarizes the rest, so a
+ * broad query delete stays a bounded tool result. */
+const REMOVED_REPORT_MAX = 10;
+
+function renderRemoved(entries: Entry[]): string {
+  const listed = entries
+    .slice(0, REMOVED_REPORT_MAX)
+    .map((entry) => `${JSON.stringify(entry.title)} (${entry.id})`);
+  const rest = entries.length - REMOVED_REPORT_MAX;
+  return rest > 0 ? `${listed.join(", ")}, and ${rest} more` : listed.join(", ");
+}
+
+function formatBytes(bytes: number): string {
+  const kb = bytes / 1024;
+  return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb / 1024).toFixed(1)} MB`;
 }
 
 /** How much of the store is summarised into a prompt, worst case. */
@@ -90,12 +139,14 @@ const INVENTORY_HEADER = "Memory already stored for this project (lessons first,
 export const TOOL_DESCRIPTIONS = {
   save: "Save a durable entry to shared working memory (decisions, facts, preferences, gotchas, lessons). Never store credentials.",
   search:
-    "Search shared working memory (all sessions on this machine). Results include this project's scope and global entries.",
+    "Search shared working memory (all sessions on this machine). Results include this project's scope and global entries: entries matching every query token come first, then entries matching some token as a prefix fill the remaining slots.",
   list: "List recent memory entries for a scope (default: this project), newest first.",
   forget:
     "Delete memory entries by id (any scope: ids are globally unique), or all entries matching a query. Query deletes stay inside this project's scope (plus global entries); an entry saved under another scope needs its id, or that scope, to be removed.",
   stats:
     "Count memory entries by kind for this project (plus global entries), with a total. Use it to see how much memory already exists, for example how many lessons reflection has written.",
+  restore:
+    "Put a trashed entry back, by id. Deletes are recoverable: memory_forget reports the ids it trashed, and memory_restore brings one of them back. An entry stays restorable for 30 days.",
 } as const;
 
 /**
@@ -153,7 +204,8 @@ export function memoryInventory(
   const lines = [INVENTORY_HEADER];
   let size = INVENTORY_HEADER.length;
   for (const entry of ordered) {
-    const line = `- [${entry.kind}] ${entry.title} (updated ${dayOf(entry.updated_at)})`;
+    const by = entry.source === undefined ? "" : `, by ${entry.source}`;
+    const line = `- [${entry.kind}] ${entry.title} (updated ${dayOf(entry.updated_at)}${by})`;
     if (size + line.length + 1 > INVENTORY_MAX_CHARS) {
       break;
     }

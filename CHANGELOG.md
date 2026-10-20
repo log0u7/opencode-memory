@@ -7,8 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `memory_restore` puts a trashed entry back by id, wherever it lived. `memory_forget` now
+  trashes instead of dropping, so a wrong delete is recoverable; a sweep hard-deletes trash
+  older than 30 days so the trash cannot grow without bound.
+- Entries record the agent that wrote them (`source`; distilled lessons carry
+  `reflection`), the session inventory names the writer, and a store created by an earlier
+  release gains the column on open instead of failing to read.
+
+### Security
+
+- The secret guard now refuses the token formats released since it was written: GitHub
+  fine-grained PATs (`github_pat_`), the GitHub OAuth and server-to-server classes
+  (`gho_`, `ghs_`, `ghu_`, `ghr_`), GitLab rotate tokens (`glrt-`), npm granular tokens
+  (`npm_`), AWS temporary key ids (`ASIA`), Google OAuth access tokens (`ya29.`) and Slack
+  incoming webhook URLs. The existing `sk-` pattern already covered Anthropic `sk-ant-`
+  keys. The three patterns whose tail class allows `_` or `-` (`github_pat_`, `gl(?:pat|rt)-`
+  and `ya29.`) additionally require a digit or an uppercase letter in the tail, so a sentence
+  written as one long lowercase snake_case or hyphenated token right after a prefix is saved
+  instead of being refused as a credential. A run carrying a digit or an uppercase anywhere
+  inside the run of the pattern's tail class is still refused: the guard forgives lowercase
+  prose only. The older `sk-`, `AIza` and `xox[ap]-` patterns keep their original shape.
+
 ### Changed
 
+- `memory_search` fuses its two rankings instead of discarding one: entries matching
+  every query token come first, then prefix matches fill the remaining slots. A query
+  where two entries hold every token used to answer a limit of ten with two results.
+- `memory_save` reports whether it created an entry or rewrote the one already holding that
+  scope and title, instead of one undifferentiated receipt: the in-place dedup rewrite is
+  no longer silent.
+- `memory_forget` lists the titles and ids it removed (ten named, then a count of the
+  rest) instead of only a count, so a broad query delete is auditable. `store.forget`
+  now returns the removed entries rather than a number.
+- `memory_stats` reports the store size on disk and the oldest live entry beside the kind
+  counts. The store has no size cap and no eviction, so this is the only signal that it is
+  growing.
 - Dev-dependency bumps from the Dependabot minor-and-patch group: `@biomejs/biome`
   2.5.15, `@opencode-ai/plugin` 1.18.35 (with the transitive `@opencode-ai/sdk` 1.18.35),
   `lefthook` 2.1.17, and in-range lockfile refreshes (vitest 5.0.3, `@types/node` 26.6.4).

@@ -85,7 +85,7 @@ export const MemoryV2 = Plugin.define({
           required: ["kind", "title", "body"],
           additionalProperties: false,
         },
-        async execute(args) {
+        async execute(args, context) {
           const a = args as {
             kind: string;
             title: string;
@@ -95,7 +95,11 @@ export const MemoryV2 = Plugin.define({
             expires_at?: number;
           };
           return {
-            content: ops.save(a, defaultScope(undefined, a.scope ?? ctx.location.directory)),
+            content: ops.save(
+              a,
+              defaultScope(undefined, a.scope ?? ctx.location.directory),
+              context.agent,
+            ),
           };
         },
       });
@@ -178,6 +182,23 @@ export const MemoryV2 = Plugin.define({
           return { content: ops.stats(defaultScope(undefined, a.scope ?? ctx.location.directory)) };
         },
       });
+
+      editor.add({
+        name: "memory_restore",
+        description: TOOL_DESCRIPTIONS.restore,
+        input: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Id of a trashed entry to put back" },
+          },
+          required: ["id"],
+          additionalProperties: false,
+        },
+        async execute(args) {
+          const a = args as { id: string };
+          return { content: ops.restore(a) };
+        },
+      });
     });
 
     // The v1 system transform maps to the v2 context hook: guidance first, then the
@@ -230,7 +251,7 @@ export const MemoryV2 = Plugin.define({
         return result.text;
       },
       saveLesson: (title, body) => {
-        ops.save({ kind: "lesson", title, body }, projectScope);
+        ops.save({ kind: "lesson", title, body }, projectScope, "reflection");
       },
     });
     // The host keeps the event stream alive through this controller; aborting it stops

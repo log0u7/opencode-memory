@@ -18,16 +18,32 @@ export const DEFAULT_LIMIT = { search: 10, list: 20 };
 /** Scope used when no worktree and no directory is known, so rows stay addressable. */
 export const FALLBACK_SCOPE = "/";
 
+/** How long a trashed entry stays restorable before a sweep drops it for good. A
+ * recoverable delete is worthless if the trash itself grows without bound. */
+export const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Live rows only: a trashed entry is invisible to every read until it is restored. */
+const LIVE = "deleted_at IS NULL";
+
 // High-confidence credential formats only: a generic "password =" rule would block
 // ordinary prose. Extend with care, one false positive costs a legitimate save.
+// The three patterns whose tail class allows `_` or `-` (github_pat_, gl(pat|rt)- and
+// ya29.) demand a digit or an uppercase letter in the tail: without it, a sentence written
+// as one long token after the prefix is refused as a credential. The older sk-, AIza and
+// xox[ap]- patterns keep their original shape and carry the same false-positive class;
+// left as they are to keep this change focused.
 const SECRET_PATTERNS = [
-  /\bsk-[A-Za-z0-9_-]{20,}\b/, // OpenAI-style
-  /\bghp_[A-Za-z0-9]{30,}\b/, // GitHub PAT
+  /\bsk-[A-Za-z0-9_-]{20,}\b/, // OpenAI-style, also covers Anthropic sk-ant- keys
+  /\bgh[posur]_[A-Za-z0-9]{30,}\b/, // GitHub PAT, OAuth, server-to-server, user-to-server, refresh
+  /\bgithub_pat_(?=[A-Za-z0-9_]*[0-9A-Z])[A-Za-z0-9_]{22,}\b/, // GitHub fine-grained PAT
   /\bxoxb-\d{10,}-\d{10,}\b/, // Slack bot token
   /\bxox[ap]-[0-9A-Za-z-]{10,}/, // Slack user / app token
-  /\bAKIA[0-9A-Z]{16}\b/, // AWS access key id
-  /\bglpat-[0-9A-Za-z_-]{20,}\b/, // GitLab PAT
+  /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9]+/, // Slack incoming webhook
+  /\bA(?:K|S)IA[0-9A-Z]{16}\b/, // AWS access key id, long-lived and temporary
+  /\bgl(?:pat|rt)-(?=[0-9A-Za-z_-]*[0-9A-Z])[0-9A-Za-z_-]{20,}\b/, // GitLab PAT and rotate token
+  /\bnpm_[A-Za-z0-9]{36}\b/, // npm granular token
   /\bAIza[0-9A-Za-z_-]{35}/, // Google API key
+  /\bya29\.(?=[0-9A-Za-z_-]*[0-9A-Z])[0-9A-Za-z_-]{20,}\b/, // Google OAuth access token
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/, // JWT
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/, // PEM private key block header
 ];
@@ -109,10 +125,30 @@ export function renderEntries(entries: Entry[]): string {
 export function sweep(db: MemoryDb, options: { now?: number } = {}): number {
   const now = options.now ?? Date.now();
   db.conn.run("DELETE FROM entries WHERE expires_at IS NOT NULL AND expires_at <= ?", [now]);
+  const expired = changesOf(db);
+  db.conn.run("DELETE FROM entries WHERE deleted_at IS NOT NULL AND deleted_at <= ?", [
+    now - TRASH_RETENTION_MS,
+  ]);
+  return expired + changesOf(db);
+}
+
+function changesOf(db: MemoryDb): number {
   return db.conn.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
 }
 
+/** Whether a save inserted a row or rewrote the one already holding that scope and
+ * title, so a caller can tell the model what actually happened. */
+export type SaveResult = { entry: Entry; created: boolean };
+
 export function save(db: MemoryDb, input: EntryInput, options: { now?: number } = {}): Entry {
+  return saveEntry(db, input, options).entry;
+}
+
+export function saveEntry(
+  db: MemoryDb,
+  input: EntryInput,
+  options: { now?: number } = {},
+): SaveResult {
   validateEntry(input);
   const scope = canonicalScope(input.scope);
   const now = options.now ?? Date.now();
@@ -127,38 +163,43 @@ export function save(db: MemoryDb, input: EntryInput, options: { now?: number } 
   // concurrent saves of the same title can both insert. Ceiling is a rare duplicate, not
   // data loss. Upgrade path: a normalized key column plus BEGIN IMMEDIATE.
   const existing = db.conn.get<{ id: string; created_at: number }>(
-    "SELECT id, created_at FROM entries WHERE scope = ? AND lower(trim(title)) = ?",
+    `SELECT id, created_at FROM entries WHERE scope = ? AND lower(trim(title)) = ? AND ${LIVE}`,
     [scope, input.title.trim().toLowerCase()],
   );
 
   if (existing) {
     db.conn.run(
-      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ? WHERE id = ?",
+      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ?, source = ? WHERE id = ?",
       [
         input.kind,
         input.body,
         JSON.stringify(input.tags),
         now,
         input.expires_at ?? null,
+        input.source ?? null,
         existing.id,
       ],
     );
     return {
-      id: existing.id,
-      scope,
-      kind: input.kind,
-      title: input.title,
-      body: input.body,
-      tags: input.tags,
-      created_at: existing.created_at,
-      updated_at: now,
-      expires_at: input.expires_at,
+      entry: {
+        id: existing.id,
+        scope,
+        kind: input.kind,
+        title: input.title,
+        body: input.body,
+        tags: input.tags,
+        created_at: existing.created_at,
+        updated_at: now,
+        expires_at: input.expires_at,
+        ...(input.source !== undefined ? { source: input.source } : {}),
+      },
+      created: false,
     };
   }
 
   const id = randomUUID();
   db.conn.run(
-    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       id,
       scope,
@@ -169,22 +210,36 @@ export function save(db: MemoryDb, input: EntryInput, options: { now?: number } 
       now,
       now,
       input.expires_at,
+      input.source ?? null,
     ],
   );
 
   return {
-    id,
-    scope,
-    kind: input.kind,
-    title: input.title,
-    body: input.body,
-    tags: input.tags,
-    created_at: now,
-    updated_at: now,
-    expires_at: input.expires_at,
+    entry: {
+      id,
+      scope,
+      kind: input.kind,
+      title: input.title,
+      body: input.body,
+      tags: input.tags,
+      created_at: now,
+      updated_at: now,
+      expires_at: input.expires_at,
+      ...(input.source !== undefined ? { source: input.source } : {}),
+    },
+    created: true,
   };
 }
 
+/**
+ * Fused search. The strict pass runs first and the prefix pass only fills what is left of
+ * the limit, so a query never loses the loose matches it used to discard: two entries
+ * holding every token answer a limit of ten with two results today.
+ *
+ * A strict hit contains every token by construction, so it is definitionally stronger
+ * than a prefix hit. Pinning strict above prefix is therefore the correct special case of
+ * reciprocal rank fusion, without the score arithmetic.
+ */
 export function search(
   db: MemoryDb,
   query: { query: string; scope: string; limit?: number; now?: number },
@@ -193,22 +248,33 @@ export function search(
   const limit = clampLimit(query.limit, DEFAULT_LIMIT.search);
   const now = query.now ?? Date.now();
 
+  const hits: Entry[] = [];
+  const seen = new Set<string>();
   for (const match of searchCandidates(query.query)) {
-    const hits = db.conn
-      .all<Row>(
-        `SELECT e.* FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid
-         WHERE entries_fts MATCH ? AND (e.scope = ? OR e.scope = 'global')
-           AND (e.expires_at IS NULL OR e.expires_at > ?)
-         ORDER BY bm25(entries_fts) ASC, e.updated_at DESC
-         LIMIT ?`,
-        [match, scope, now, limit],
-      )
-      .map(rowToEntry);
-    if (hits.length > 0) {
-      return hits;
+    for (const entry of ftsHits(db, match, scope, now, limit)) {
+      if (!seen.has(entry.id)) {
+        seen.add(entry.id);
+        hits.push(entry);
+      }
+    }
+    if (hits.length >= limit) {
+      break;
     }
   }
-  return [];
+  return hits.slice(0, limit);
+}
+
+function ftsHits(db: MemoryDb, match: string, scope: string, now: number, limit: number): Entry[] {
+  return db.conn
+    .all<Row>(
+      `SELECT e.* FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid
+       WHERE entries_fts MATCH ? AND (e.scope = ? OR e.scope = 'global')
+         AND (e.expires_at IS NULL OR e.expires_at > ?) AND e.${LIVE}
+       ORDER BY bm25(entries_fts) ASC, e.updated_at DESC
+       LIMIT ?`,
+      [match, scope, now, limit],
+    )
+    .map(rowToEntry);
 }
 
 export function list(
@@ -225,6 +291,7 @@ export function list(
     .all<Row>(
       `SELECT * FROM entries
        WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?) ${kindFilter}
+         AND ${LIVE}
        ORDER BY updated_at DESC, id ASC
        LIMIT ?`,
       [scope, now, ...kindArgs, limit],
@@ -243,45 +310,89 @@ export function stats(
   const now = query.now ?? Date.now();
   return db.conn.all<{ kind: string; count: number }>(
     `SELECT kind, COUNT(*) AS count FROM entries
-     WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?)
+     WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?) AND ${LIVE}
      GROUP BY kind ORDER BY count DESC, kind ASC`,
     [scope, now],
   );
+}
+
+/** Creation date of the oldest live entry in one scope plus `global`, or null when the
+ * scope is empty: the store grows without bound, so age is the signal that knowledge is
+ * rotting rather than accumulating. */
+export function oldestCreated(db: MemoryDb, query: { scope: string; now?: number }): number | null {
+  const scope = canonicalScope(query.scope);
+  const now = query.now ?? Date.now();
+  const row = db.conn.get<{ oldest: number | null }>(
+    `SELECT MIN(created_at) AS oldest FROM entries
+     WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?) AND ${LIVE}`,
+    [scope, now],
+  );
+  return row?.oldest ?? null;
 }
 
 /**
  * Query deletes stay inside one scope (plus the shared `global` scope): a fuzzy match
  * must never silently hit other projects' entries. Id deletes are machine-wide because
  * the id is globally unique: closed worktrees stay cleanable from any project.
+ *
+ * Both forms trash instead of dropping, so a wrong delete is recoverable, and both report
+ * the entries they moved: a broad query can take many rows at once, and the caller has to
+ * be able to say which ones. Only live rows count, so a second delete of the same target
+ * is a no-op.
  */
-export function forget(db: MemoryDb, target: ForgetTarget): number {
-  if ("id" in target) {
-    db.conn.run("DELETE FROM entries WHERE id = ?", [target.id]);
-    return changesOf(db);
-  }
+export function forget(db: MemoryDb, target: ForgetTarget): Entry[] {
+  const trashed =
+    "id" in target
+      ? db.conn.all<Row>(`SELECT * FROM entries WHERE id = ? AND ${LIVE}`, [target.id])
+      : trashedByQuery(db, target);
 
+  if (trashed.length === 0) {
+    return [];
+  }
+  const now = Date.now();
+  const ids = trashed.map((row) => row.id);
+  db.conn.run(`UPDATE entries SET deleted_at = ? WHERE id IN (${ids.map(() => "?").join(", ")})`, [
+    now,
+    ...ids,
+  ]);
+  return trashed.map(rowToEntry);
+}
+
+/** Puts a trashed entry back into every read. Machine-wide by id, mirroring the delete it
+ * undoes; `null` when the id is not in the trash. */
+export function restore(db: MemoryDb, target: { id: string }): Entry | null {
+  const row = db.conn.get<Row>(`SELECT * FROM entries WHERE id = ? AND deleted_at IS NOT NULL`, [
+    target.id,
+  ]);
+  if (row === null) {
+    return null;
+  }
+  db.conn.run("UPDATE entries SET deleted_at = NULL WHERE id = ?", [target.id]);
+  return rowToEntry(row);
+}
+
+function trashedByQuery(db: MemoryDb, target: { query: string; scope: string }): Row[] {
   const scope = canonicalScope(target.scope);
 
   // Deleting is precision-first: only the strict all-token match, never the fuzzy
-  // fallback. A wrong read costs the model a retry, a wrong delete is unrecoverable.
+  // fallback. A wrong read costs the model a retry, a wrong delete used to be
+  // unrecoverable; it now costs a restore.
   const match = strictMatch(target.query);
   if (match === null) {
-    return 0;
+    return [];
   }
-  db.conn.run(
-    `DELETE FROM entries WHERE id IN (
-       SELECT e.id FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid WHERE entries_fts MATCH ?
-     ) AND (scope = ? OR scope = 'global')`,
+  return db.conn.all<Row>(
+    `SELECT e.* FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid
+     WHERE entries_fts MATCH ? AND (e.scope = ? OR e.scope = 'global') AND e.${LIVE}`,
     [match, scope],
   );
-  return changesOf(db);
 }
 
-function changesOf(db: MemoryDb): number {
-  return db.conn.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
-}
-
-type Row = Omit<Entry, "tags"> & { tags: string };
+type Row = Omit<Entry, "tags" | "source"> & {
+  tags: string;
+  source: string | null;
+  deleted_at: number | null;
+};
 
 function rowToEntry(row: Row): Entry {
   return {
@@ -294,6 +405,7 @@ function rowToEntry(row: Row): Entry {
     created_at: row.created_at,
     updated_at: row.updated_at,
     expires_at: row.expires_at,
+    ...(row.source !== null ? { source: row.source } : {}),
   };
 }
 
@@ -308,8 +420,8 @@ function parseTags(raw: string): string[] {
 
 /**
  * FTS5 candidates, most precise first, each quoted so arbitrary model input stays a
- * literal search. The strict AND match is tried before the looser prefix OR match:
- * recall matters more than precision once the strict match found nothing.
+ * literal search. The strict AND match is fused ahead of the looser prefix OR match:
+ * precision leads, recall fills what is left of the limit.
  */
 function searchCandidates(raw: string): string[] {
   const strict = strictMatch(raw);
