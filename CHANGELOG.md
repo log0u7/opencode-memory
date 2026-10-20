@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The plugin opened its SQLite store through the `Bun.sqlite` global, which Bun 1.3
+  removed: the first `openMemoryDb` threw on every Bun 1.3 runtime, which is what the
+  installed OpenCode embeds. It now reads `process.versions.bun` and loads the `bun:sqlite`
+  module through the same `createRequire` seam as `node:sqlite`, so one path covers old and
+  new Bun. Verified against the built output under Bun 1.3.14 (open, save, search, stats,
+  trash and restore).
+
 ### Added
 
 - `memory_restore` puts a trashed entry back by id, wherever it lived. `memory_forget` now
