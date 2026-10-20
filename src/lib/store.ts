@@ -21,13 +21,17 @@ export const FALLBACK_SCOPE = "/";
 // High-confidence credential formats only: a generic "password =" rule would block
 // ordinary prose. Extend with care, one false positive costs a legitimate save.
 const SECRET_PATTERNS = [
-  /\bsk-[A-Za-z0-9_-]{20,}\b/, // OpenAI-style
-  /\bghp_[A-Za-z0-9]{30,}\b/, // GitHub PAT
+  /\bsk-[A-Za-z0-9_-]{20,}\b/, // OpenAI-style, also covers Anthropic sk-ant- keys
+  /\bgh[posur]_[A-Za-z0-9]{30,}\b/, // GitHub PAT, OAuth, server-to-server, user-to-server, refresh
+  /\bgithub_pat_[A-Za-z0-9_]{22,}\b/, // GitHub fine-grained PAT
   /\bxoxb-\d{10,}-\d{10,}\b/, // Slack bot token
   /\bxox[ap]-[0-9A-Za-z-]{10,}/, // Slack user / app token
-  /\bAKIA[0-9A-Z]{16}\b/, // AWS access key id
-  /\bglpat-[0-9A-Za-z_-]{20,}\b/, // GitLab PAT
+  /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9]+/, // Slack incoming webhook
+  /\bA(?:K|S)IA[0-9A-Z]{16}\b/, // AWS access key id, long-lived and temporary
+  /\bgl(?:pat|rt)-[0-9A-Za-z_-]{20,}\b/, // GitLab PAT and rotate token
+  /\bnpm_[A-Za-z0-9]{36}\b/, // npm granular token
   /\bAIza[0-9A-Za-z_-]{35}/, // Google API key
+  /\bya29\.[0-9A-Za-z_-]{20,}\b/, // Google OAuth access token
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/, // JWT
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/, // PEM private key block header
 ];

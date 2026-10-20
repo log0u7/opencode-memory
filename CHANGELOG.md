@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The secret guard now refuses the token formats released since it was written: GitHub
+  fine-grained PATs (`github_pat_`), the GitHub OAuth and server-to-server classes
+  (`gho_`, `ghs_`, `ghu_`, `ghr_`), GitLab rotate tokens (`glrt-`), npm granular tokens
+  (`npm_`), AWS temporary key ids (`ASIA`), Google OAuth access tokens (`ya29.`) and Slack
+  incoming webhook URLs. The existing `sk-` pattern already covered Anthropic `sk-ant-`
+  keys.
+
 ### Changed
 
 - Dev-dependency bumps from the Dependabot minor-and-patch group: `@biomejs/biome`

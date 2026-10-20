@@ -89,6 +89,54 @@ describe("store.save", () => {
     db.close();
   });
 
+  it("rejects credentials in the token formats released since the first patterns", () => {
+    const db = openMemoryDb(":memory:");
+    // GitHub fine-grained PAT: the current default, not covered by the ghp_ class.
+    expect(() =>
+      save(
+        db,
+        input({
+          body: "pat github_pat_11AAAA7Yk3mQ0abcdefghijklmnopqrstuvwxyz0123456789ABCDEF for ci",
+        }),
+      ),
+    ).toThrow(SecretDetectedError);
+    // GitHub OAuth and server-to-server classes.
+    expect(() =>
+      save(db, input({ body: "oauth gho_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })),
+    ).toThrow(SecretDetectedError);
+    expect(() =>
+      save(db, input({ body: "deploy ghs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })),
+    ).toThrow(SecretDetectedError);
+    // GitLab rotate token, npm granular token, AWS temporary id, Google OAuth token.
+    expect(() => save(db, input({ body: "rotate glrt-abcdefghijklmnopqrst" }))).toThrow(
+      SecretDetectedError,
+    );
+    expect(() =>
+      save(db, input({ body: `npm token npm_${"a".repeat(36)} in the workflow` })),
+    ).toThrow(SecretDetectedError);
+    expect(() => save(db, input({ body: "temp aws ASIAABCDEFGHIJKLMNOP in notes" }))).toThrow(
+      SecretDetectedError,
+    );
+    expect(() =>
+      save(
+        db,
+        input({
+          body: "google ya29.a0AfH6SBBcxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx in notes",
+        }),
+      ),
+    ).toThrow(SecretDetectedError);
+    // A webhook URL is a credential by itself.
+    expect(() =>
+      save(
+        db,
+        input({
+          body: "hook https://hooks.slack.com/services/T00000000/B00000000/abcdefghijklmnop",
+        }),
+      ),
+    ).toThrow(SecretDetectedError);
+    db.close();
+  });
+
   it("accepts normal prose that merely mentions secrets", () => {
     const db = openMemoryDb(":memory:");
     expect(() =>
@@ -101,6 +149,14 @@ describe("store.save", () => {
     ).not.toThrow();
     expect(() =>
       save(db, input({ body: "the docs mention sk- keys and AKIA ids as examples of formats" })),
+    ).not.toThrow();
+    expect(() =>
+      save(
+        db,
+        input({
+          body: "the docs list gho_, github_pat_, glrt-, npm_ and ya29. as token formats to redact",
+        }),
+      ),
     ).not.toThrow();
     db.close();
   });
