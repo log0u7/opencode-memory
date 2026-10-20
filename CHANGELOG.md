@@ -27,7 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `ya29.`) additionally require a digit or an uppercase letter in the tail, so a sentence
   written as one long lowercase snake_case or hyphenated token right after a prefix is saved
   instead of being refused as a credential. A run carrying a digit or an uppercase anywhere
-  is still refused: the guard forgives lowercase prose only.
+  inside the run of the pattern's tail class is still refused: the guard forgives lowercase
+  prose only. The older `sk-`, `AIza` and `xox[ap]-` patterns keep their original shape.
 
 ### Changed
 

@@ -152,7 +152,7 @@ describe("store.save", () => {
       save(db, input({ body: "never commit github_pat_style_tokens_they_are_rotated_quarterly" })),
     ).not.toThrow();
     expect(() =>
-      save(db, input({ body: "rotate the glrt-token-token-token-token and redact the old one" })),
+      save(db, input({ body: "rotate the glrt-aaaa-aaaa-aaaa-aaaa-aaaa token every quarter" })),
     ).not.toThrow();
     expect(() =>
       save(db, input({ body: "the ya29.some-really-long-identifier-in-prose is not a token" })),
@@ -184,6 +184,34 @@ describe("store.save", () => {
     expect(() =>
       save(db, input({ body: `github_pat_${"a".repeat(22)} and then 1234567890` })),
     ).not.toThrow();
+    // The GitLab and Google classes contain "-", so their lookahead crosses a hyphen
+    // inside the run; the GitHub class does not, which is the only asymmetry between the
+    // three and the reason the hyphenated case below is refused there but not here.
+    expect(() => save(db, input({ body: "rotate glrt-aaaa-aaaa-aaaa-aaaa-9" }))).toThrow(
+      SecretDetectedError,
+    );
+    expect(() => save(db, input({ body: "ya29.some-really-long-identifier-in-prose-2" }))).toThrow(
+      SecretDetectedError,
+    );
+    // Past the minimum length, the greedy quantifier swallows the whole run, so a digit
+    // out there still refuses. Only github_pat_ had this case before.
+    expect(() =>
+      save(db, input({ body: `glrt-${"a".repeat(20)}9 tail past the minimum` })),
+    ).toThrow(SecretDetectedError);
+    expect(() =>
+      save(db, input({ body: `ya29.${"a".repeat(20)}9 tail past the minimum` })),
+    ).toThrow(SecretDetectedError);
+    db.close();
+  });
+
+  it("leaves the older patterns with the shape they always had", () => {
+    const db = openMemoryDb(":memory:");
+    // sk-, AIza and xox[ap]- were not widened, so they keep refusing a hyphenated prose
+    // run. Widening them is a separate decision, and the comment above the patterns says
+    // so; this test pins that scope-out so it cannot drift silently.
+    expect(() => save(db, input({ body: "sk-ant-ant-ant-ant-ant-ant-ant-ant-ant" }))).toThrow(
+      SecretDetectedError,
+    );
     db.close();
   });
 

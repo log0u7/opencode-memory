@@ -1,3 +1,6 @@
+# One entry per line a gitleaks run flagged, because the fingerprint carries the line
+# number: a moved line needs a new entry. The first group covers the history scan
+# (gitleaks detect, what CI runs on the push to main), the second the working tree.
 tests/lib.store.test.ts:aws-access-token:66
 tests/lib.store.test.ts:gitlab-pat:69
 tests/lib.store.test.ts:gcp-api-key:73
