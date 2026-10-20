@@ -207,6 +207,15 @@ export function saveEntry(
   };
 }
 
+/**
+ * Fused search. The strict pass runs first and the prefix pass only fills what is left of
+ * the limit, so a query never loses the loose matches it used to discard: two entries
+ * holding every token answer a limit of ten with two results today.
+ *
+ * A strict hit contains every token by construction, so it is definitionally stronger
+ * than a prefix hit. Pinning strict above prefix is therefore the correct special case of
+ * reciprocal rank fusion, without the score arithmetic.
+ */
 export function search(
   db: MemoryDb,
   query: { query: string; scope: string; limit?: number; now?: number },
@@ -215,22 +224,33 @@ export function search(
   const limit = clampLimit(query.limit, DEFAULT_LIMIT.search);
   const now = query.now ?? Date.now();
 
+  const hits: Entry[] = [];
+  const seen = new Set<string>();
   for (const match of searchCandidates(query.query)) {
-    const hits = db.conn
-      .all<Row>(
-        `SELECT e.* FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid
-         WHERE entries_fts MATCH ? AND (e.scope = ? OR e.scope = 'global')
-           AND (e.expires_at IS NULL OR e.expires_at > ?)
-         ORDER BY bm25(entries_fts) ASC, e.updated_at DESC
-         LIMIT ?`,
-        [match, scope, now, limit],
-      )
-      .map(rowToEntry);
-    if (hits.length > 0) {
-      return hits;
+    for (const entry of ftsHits(db, match, scope, now, limit)) {
+      if (!seen.has(entry.id)) {
+        seen.add(entry.id);
+        hits.push(entry);
+      }
+    }
+    if (hits.length >= limit) {
+      break;
     }
   }
-  return [];
+  return hits.slice(0, limit);
+}
+
+function ftsHits(db: MemoryDb, match: string, scope: string, now: number, limit: number): Entry[] {
+  return db.conn
+    .all<Row>(
+      `SELECT e.* FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid
+       WHERE entries_fts MATCH ? AND (e.scope = ? OR e.scope = 'global')
+         AND (e.expires_at IS NULL OR e.expires_at > ?)
+       ORDER BY bm25(entries_fts) ASC, e.updated_at DESC
+       LIMIT ?`,
+      [match, scope, now, limit],
+    )
+    .map(rowToEntry);
 }
 
 export function list(
@@ -350,8 +370,8 @@ function parseTags(raw: string): string[] {
 
 /**
  * FTS5 candidates, most precise first, each quoted so arbitrary model input stays a
- * literal search. The strict AND match is tried before the looser prefix OR match:
- * recall matters more than precision once the strict match found nothing.
+ * literal search. The strict AND match is fused ahead of the looser prefix OR match:
+ * precision leads, recall fills what is left of the limit.
  */
 function searchCandidates(raw: string): string[] {
   const strict = strictMatch(raw);

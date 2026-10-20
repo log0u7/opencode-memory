@@ -342,6 +342,56 @@ describe("store.search", () => {
     db.close();
   });
 
+  it("fills the remaining slots with prefix matches after the strict ones", () => {
+    const db = openMemoryDb(":memory:");
+    // The default fixture tags and body carry "postgres", so the fixtures here control
+    // their own tokens.
+    const strictOne = save(
+      db,
+      input({ tags: [], title: "postgres migration plan", body: "phased rollout" }),
+    );
+    const strictTwo = save(
+      db,
+      input({ tags: [], title: "postgres migration rollback", body: "safe rollback" }),
+    );
+    const looseOne = save(db, input({ tags: [], title: "postgresql tuning", body: "buffers" }));
+    const looseTwo = save(db, input({ tags: [], title: "migrations checklist", body: "steps" }));
+
+    const hits = search(db, { query: "postgres migration", scope: "/work/project" });
+
+    // Every match comes back, strict ones first, each entry exactly once.
+    expect(hits).toHaveLength(4);
+    expect(
+      hits
+        .slice(0, 2)
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual([strictOne.id, strictTwo.id].sort());
+    expect(
+      hits
+        .slice(2)
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual([looseOne.id, looseTwo.id].sort());
+    expect(new Set(hits.map((e) => e.id)).size).toBe(4);
+    db.close();
+  });
+
+  it("keeps the strict matches when the limit is smaller than the fused set", () => {
+    const db = openMemoryDb(":memory:");
+    save(db, input({ tags: [], title: "postgres migration plan", body: "phased rollout" }));
+    save(db, input({ tags: [], title: "postgres migration rollback", body: "safe rollback" }));
+    save(db, input({ tags: [], title: "postgresql tuning", body: "buffers" }));
+
+    const hits = search(db, { query: "postgres migration", scope: "/work/project", limit: 2 });
+
+    expect(hits.map((e) => e.title).sort()).toEqual([
+      "postgres migration plan",
+      "postgres migration rollback",
+    ]);
+    db.close();
+  });
+
   it("returns nothing instead of failing on an empty query", () => {
     const db = openMemoryDb(":memory:");
     save(db, input({ title: "postgres migration" }));

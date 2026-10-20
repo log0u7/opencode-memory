@@ -8,7 +8,7 @@
 
 Working memory for [OpenCode](https://opencode.ai): a shared SQLite store that all sessions on a machine read and write, so decisions, facts, and compaction summaries survive session boundaries.
 
-Every session gets five tools (`memory_save`, `memory_search`, `memory_list`, `memory_forget`, `memory_stats`). Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, strict match first with a prefix fallback). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
+Every session gets five tools (`memory_save`, `memory_search`, `memory_list`, `memory_forget`, `memory_stats`). Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, entries matching every query token first, then prefix matches fill the remaining slots). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
 
 ## Safety limits
 
@@ -56,7 +56,7 @@ memory_stats()
 | Tool | Args | Description |
 |---|---|---|
 | `memory_save` | `kind`, `title`, `body`, `scope?`, `tags?`, `expires_at?` | Save an entry. Default scope is the session worktree. |
-| `memory_search` | `query`, `scope?`, `limit?` | FTS5 BM25 search; strict match first, prefix OR fallback when nothing matches. |
+| `memory_search` | `query`, `scope?`, `limit?` | FTS5 BM25 search; entries matching every query token first, then prefix matches fill the remaining slots. |
 | `memory_list` | `scope?`, `limit?` | Recent entries, newest first. |
 | `memory_forget` | `id` or `query` | Delete one entry by id, or all matching a query. |
 | `memory_stats` | `scope?` | Count entries by kind (plus global) with a total; checks how much memory exists. |

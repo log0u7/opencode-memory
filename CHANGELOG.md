@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `memory_search` fuses its two rankings instead of discarding one: entries matching
+  every query token come first, then prefix matches fill the remaining slots. A query
+  where two entries hold every token used to answer a limit of ten with two results.
 - `memory_save` reports whether it created an entry or rewrote the one already holding that
   scope and title, instead of one undifferentiated receipt: the in-place dedup rewrite is
   no longer silent.

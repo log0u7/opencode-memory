@@ -127,7 +127,7 @@ const INVENTORY_HEADER = "Memory already stored for this project (lessons first,
 export const TOOL_DESCRIPTIONS = {
   save: "Save a durable entry to shared working memory (decisions, facts, preferences, gotchas, lessons). Never store credentials.",
   search:
-    "Search shared working memory (all sessions on this machine). Results include this project's scope and global entries.",
+    "Search shared working memory (all sessions on this machine). Results include this project's scope and global entries: entries matching every query token come first, then entries matching some token as a prefix fill the remaining slots.",
   list: "List recent memory entries for a scope (default: this project), newest first.",
   forget:
     "Delete memory entries by id (any scope: ids are globally unique), or all entries matching a query. Query deletes stay inside this project's scope (plus global entries); an entry saved under another scope needs its id, or that scope, to be removed.",
