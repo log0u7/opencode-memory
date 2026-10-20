@@ -3,3 +3,7 @@ tests/lib.store.test.ts:gitlab-pat:69
 tests/lib.store.test.ts:gcp-api-key:73
 tests/lib.store.test.ts:gitlab-runner-authentication-token:111
 tests/lib.store.test.ts:aws-access-token:117
+tests/lib.store.test.ts:gitlab-runner-authentication-token:153
+tests/lib.store.test.ts:aws-access-token:70
+tests/lib.store.test.ts:gcp-api-key:77
+tests/lib.store.test.ts:aws-access-token:121

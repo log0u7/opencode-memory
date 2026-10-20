@@ -145,12 +145,14 @@ describe("store.save", () => {
     const db = openMemoryDb(":memory:");
     // The widened patterns whose tail class allows `_` or `-` would otherwise refuse an
     // ordinary sentence written as one long token, and a refused save costs the model a
-    // retry it cannot explain.
+    // retry it cannot explain. The GitLab fixture repeats a word on purpose: a run of
+    // distinct characters long enough to match is also what secret scanners read as a
+    // real token, and this one is prose.
     expect(() =>
       save(db, input({ body: "never commit github_pat_style_tokens_they_are_rotated_quarterly" })),
     ).not.toThrow();
     expect(() =>
-      save(db, input({ body: "rotate the glrt-token-every-ninety-days-and-redact-the-old-one" })),
+      save(db, input({ body: "rotate the glrt-token-token-token-token and redact the old one" })),
     ).not.toThrow();
     expect(() =>
       save(db, input({ body: "the ya29.some-really-long-identifier-in-prose is not a token" })),
@@ -165,6 +167,23 @@ describe("store.save", () => {
         }),
       ),
     ).toThrow(SecretDetectedError);
+    db.close();
+  });
+
+  it("keeps refusing a token-like run that carries a digit or an uppercase", () => {
+    const db = openMemoryDb(":memory:");
+    // The lookahead forgives lowercase prose only, and it scans the whole tail: a digit
+    // anywhere in the run, including past the minimum length, still refuses.
+    expect(() =>
+      save(db, input({ body: "never commit github_pat_rotate_tokens_every_90_days" })),
+    ).toThrow(SecretDetectedError);
+    expect(() =>
+      save(db, input({ body: `github_pat_${"a".repeat(22)}9 tail past the minimum` })),
+    ).toThrow(SecretDetectedError);
+    // A digit outside the run does not count, because the lookahead cannot cross a space.
+    expect(() =>
+      save(db, input({ body: `github_pat_${"a".repeat(22)} and then 1234567890` })),
+    ).not.toThrow();
     db.close();
   });
 

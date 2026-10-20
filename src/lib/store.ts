@@ -27,9 +27,11 @@ const LIVE = "deleted_at IS NULL";
 
 // High-confidence credential formats only: a generic "password =" rule would block
 // ordinary prose. Extend with care, one false positive costs a legitimate save.
-// Where the tail class allows `_` or `-`, a lookahead demands a digit or an uppercase
-// letter: without it, a sentence written as one long snake_case or hyphenated token right
-// after a prefix is refused as a credential instead of being saved.
+// The three patterns whose tail class allows `_` or `-` (github_pat_, gl(pat|rt)- and
+// ya29.) demand a digit or an uppercase letter in the tail: without it, a sentence written
+// as one long token after the prefix is refused as a credential. The older sk-, AIza and
+// xox[ap]- patterns keep their original shape and carry the same false-positive class;
+// left as they are to keep this change focused.
 const SECRET_PATTERNS = [
   /\bsk-[A-Za-z0-9_-]{20,}\b/, // OpenAI-style, also covers Anthropic sk-ant- keys
   /\bgh[posur]_[A-Za-z0-9]{30,}\b/, // GitHub PAT, OAuth, server-to-server, user-to-server, refresh
