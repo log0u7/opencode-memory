@@ -1,3 +1,7 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
 import { describe, expect, it } from "vitest";
 
 import module_ from "../src/index.js";
@@ -38,7 +42,39 @@ describe("smoke: plugin module", () => {
     ]);
     await hooks.dispose?.();
   });
+
+  it("forwards the options argument through server() (dbPath honored)", async () => {
+    // The store opens lazily on the first tool call: writing one entry forces
+    // the open, and the file must land at the dbPath the wrapper forwarded.
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-smoke-"));
+    try {
+      const dbPath = join(dir, "forwarded.db");
+      const hooks = await module_.server(fakeInput(), { dbPath });
+      expect(hooks.tool?.memory_save).toBeDefined();
+      await hooks.tool?.memory_save?.execute(
+        { kind: "fact", title: "options forwarded", body: "x" },
+        ctx(),
+      );
+      expect(existsSync(dbPath)).toBe(true);
+      await hooks.dispose?.();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
+
+function ctx() {
+  return {
+    sessionID: "s1",
+    messageID: "m1",
+    agent: "build",
+    directory: "/work/project",
+    worktree: "/work/project",
+    abort: new AbortController().signal,
+    metadata: () => {},
+    ask: async () => {},
+  };
+}
 
 function fakeInput() {
   return {
