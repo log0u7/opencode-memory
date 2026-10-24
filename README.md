@@ -33,7 +33,7 @@ The package is installed automatically at startup into opencode's plugin cache (
 
 ```json
 {
-  "plugin": ["@log0u7/opencode-memory@0.1.1"]
+  "plugin": ["@log0u7/opencode-memory@0.5.1"]
 }
 ```
 
