@@ -14,7 +14,7 @@ import {
   defaultScope,
   defaultDbPath,
   type PluginOptions,
-} from "./plugin.js";
+} from "./options.js";
 
 const textPart = (text: string) => ({ type: "text" as const, text });
 

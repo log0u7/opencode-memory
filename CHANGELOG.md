@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The package loads under OpenCode 2 again. The v1 implementation imports
+  `@opencode-ai/plugin`, which only v1 hosts resolve, and it sat in the static
+  import graph, so v2 hosts rejected the whole plugin at load time
+  (`Cannot find package '@opencode-ai/plugin'`). The v1 entry is now loaded
+  lazily from `server()`: a v2 host never calls `server()` and therefore never
+  resolves the v1-only packages. The named `MemoryPlugin` export is type-only.
+- Shared option plumbing and the system-guidance/compaction constants moved
+  from `plugin.ts` to `options.ts` so the v2 adapter no longer imports the v1
+  module statically.
+- New `smoke:dist` script audits the static import graph of `dist/`: no
+  `@opencode-ai/*` import may be reachable statically, `plugin.js` must only
+  be reached through a dynamic `import()`, and every other bare import must
+  be `@opencode/plugin`, a Node builtin, or a declared runtime dependency.
+
 ## [0.5.0] - 2026-10-20
 
 ### Fixed
