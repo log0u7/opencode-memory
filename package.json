@@ -47,12 +47,12 @@
     "node": ">=22.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
-    "@opencode-ai/plugin": "1.18.35",
-    "@opencode/plugin": "2.0.26",
+    "@biomejs/biome": "2.6.2",
+    "@opencode-ai/plugin": "1.19.4",
+    "@opencode/plugin": "2.1.3",
     "@types/node": "^26.6.2",
     "@vitest/coverage-v8": "^5.0.1",
-    "lefthook": "2.1.17",
+    "lefthook": "2.2.2",
     "typescript": "7.0.2",
     "vitest": "^5.0.0"
   }
