@@ -521,6 +521,9 @@ export const MemoryV2 = Plugin.define({
           // retentionDays 0 and maxSessions 0, but force those specific ids as candidates by
           // a separate path. Simpler: sweep all then filter candidates to the requested ids.
           const targeted = !!(a.sessionIDs && a.sessionIDs.length > 0);
+          // Targeted mode must never let the policy sweep delete unrelated transcripts:
+          // run the policy pass as a dry run, then delete only the explicitly requested ids.
+          const sweepDryRun = dryRun || targeted;
           const result = sweepTranscripts(retrieval.dir, {
             retentionDays:
               a.retentionDays !== undefined
@@ -534,7 +537,7 @@ export const MemoryV2 = Plugin.define({
               a.maxSessions !== undefined ? a.maxSessions : targeted ? 0 : retrieval.maxSessions,
             scope: a.allScopes === true ? undefined : projectScope,
             protectedSessionID: context.sessionID,
-            dryRun,
+            dryRun: sweepDryRun,
             now: Date.now(),
           });
           // Targeted filter.
