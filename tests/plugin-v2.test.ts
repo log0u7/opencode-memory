@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,7 @@ import { MemoryPlugin } from "../src/plugin.js";
 import { pluginModule } from "../src/index.js";
 import { list, MAX_LIMIT } from "../src/lib/store.js";
 import { openMemoryDb } from "../src/lib/db.js";
+import { writeTranscriptFile } from "../src/compaction.js";
 
 function v1Input(worktree = "/home/u/project") {
   return {
@@ -56,6 +57,15 @@ type AddedTool = {
   ) => Promise<{ content?: string }>;
 };
 
+type AddedCommand = {
+  name: string;
+  execute: (input: {
+    sessionID: string;
+    prompt: { text: string };
+    delivery: "steer" | "queue";
+  }) => Promise<void>;
+};
+
 type V2Event = { type: string; data: { sessionID: string } };
 
 function fakeCtx(
@@ -64,12 +74,14 @@ function fakeCtx(
   fixtures: {
     events?: V2Event[];
     subscribe?: () => AsyncIterable<V2Event>;
-    sessionGet?: () => { parentID?: string };
+    sessionGet?: () => Record<string, unknown>;
     context?: () => unknown[];
+    sessions?: Array<{ id?: string; location?: { directory?: string } }>;
     generateText?: () => Promise<{ text: string }>;
   } = {},
 ) {
   const added: AddedTool[] = [];
+  const commands: AddedCommand[] = [];
   const sessionHooks = new Map<
     string,
     (event: { system: Array<{ type: string; text: string }>; messages: unknown[] }) => void
@@ -93,6 +105,12 @@ function fakeCtx(
         fixtures.sessionGet ? fixtures.sessionGet() : { id: input.sessionID },
       ),
       context: vi.fn(async () => (fixtures.context ? fixtures.context() : [])),
+      prompt: vi.fn(async () => ({})),
+      list: vi.fn(async () => ({ data: fixtures.sessions ?? [], cursor: {} })),
+    },
+    command: {
+      transform: async (fn: (editor: { add: (definition: AddedCommand) => void }) => void) =>
+        fn({ add: (definition) => commands.push(definition) }),
     },
     generate: { text: vi.fn(fixtures.generateText ?? (async () => ({ text: "[]" }))) },
     event: {
@@ -108,7 +126,7 @@ function fakeCtx(
     },
   } as unknown as Plugin.Context;
 
-  return { ctx, added, sessionHooks };
+  return { ctx, added, sessionHooks, commands };
 }
 
 describe("v1 and v2 share one behaviour", () => {
@@ -191,6 +209,8 @@ describe("opencode-memory v2 setup", () => {
       "memory_restore",
       "memory_save",
       "memory_search",
+      "memory_session_read",
+      "memory_session_search",
       "memory_stats",
     ]);
     await cleanup?.();
@@ -378,6 +398,259 @@ describe("opencode-memory v2 setup", () => {
     expect((await byName.get("memory_list")?.execute({}, { sessionID: "s1" }))?.content).toBe(
       "no memory entries",
     );
+    await cleanup?.();
+  });
+
+  it("exports the transcript and sets the pointer when compaction runs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-wire-"));
+    dirs.push(dir);
+    const dbPath = join(dir, "memory.db");
+    const { ctx, sessionHooks } = fakeCtx(dbPath, {
+      retrieval: { dir: join(dir, "transcripts") },
+    });
+    const cleanup = await pluginModule.setup(ctx);
+
+    const event = {
+      system: [] as Array<{ type: string; text: string }>,
+      sessionID: "ses_w",
+      model: { providerID: "p", id: "m" },
+      messages: [{ role: "user", content: [{ type: "text", text: "wire me" }] }],
+    };
+    await sessionHooks.get("compaction")?.(event as never);
+
+    expect(
+      existsSync(join(dir, "transcripts", encodeURIComponent("/home/u/project"), "ses_w.md")),
+    ).toBe(true);
+    const result = (event as { result?: { summary: string } }).result;
+    expect(result?.summary).toContain("ses_w.md");
+    expect(result?.summary).toContain("Never guess: retrieve.");
+    await cleanup?.();
+  });
+
+  it("keeps the plain compaction flow when retrieval is disabled", async () => {
+    const dbPath = tmpDbPath();
+    const { ctx, added, sessionHooks } = fakeCtx(dbPath, { retrieval: { enabled: false } });
+    const cleanup = await pluginModule.setup(ctx);
+    const names = added.map((t) => t.name);
+    expect(names).not.toContain("memory_session_search");
+    expect(names).not.toContain("memory_session_read");
+
+    const event = {
+      system: [] as Array<{ type: string; text: string }>,
+      sessionID: "ses_d",
+      messages: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+    };
+    await sessionHooks.get("compaction")?.(event as never);
+    expect((event as { result?: unknown }).result).toBeUndefined();
+    await cleanup?.();
+  });
+
+  it("limits the search to the requested session, not its siblings", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-scope-"));
+    dirs.push(dir);
+    const transcriptsDir = join(dir, "transcripts");
+    const scopeDir = join(transcriptsDir, encodeURIComponent("/home/u/project"));
+    writeTranscriptFile(join(scopeDir, "ses_one.md"), "## user\nsecret-one here\n");
+    writeTranscriptFile(join(scopeDir, "ses_two.md"), "## user\nsecret-two here\n");
+    const { ctx, added } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: transcriptsDir },
+    });
+    const cleanup = await pluginModule.setup(ctx);
+    const byName = new Map(added.map((t) => [t.name, t]));
+    const out = await byName
+      .get("memory_session_search")
+      ?.execute({ query: "secret", sessionID: "ses_one" }, { sessionID: "s1" });
+    expect(out?.content).toContain("ses_one.md");
+    expect(out?.content).not.toContain("ses_two.md");
+    await cleanup?.();
+  });
+
+  it("hides memory-continue when retrieval is disabled", async () => {
+    const { ctx, commands } = fakeCtx(tmpDbPath(), { retrieval: { enabled: false } });
+    const cleanup = await pluginModule.setup(ctx);
+    expect(commands.map((c) => c.name)).not.toContain("memory-continue");
+    await cleanup?.();
+  });
+
+  it("falls back to the model summary when the transcript export fails", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-ro-"));
+    dirs.push(dir);
+    const restricted = join(dir, "restricted");
+    mkdirSync(restricted, { mode: 0o500 });
+    const { ctx, sessionHooks } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: join(restricted, "transcripts") },
+    });
+    const cleanup = await pluginModule.setup(ctx);
+    const event = {
+      system: [] as Array<{ type: string; text: string }>,
+      sessionID: "ses_ro",
+      model: { providerID: "p", id: "m" },
+      messages: [{ role: "user", content: [{ type: "text", text: "survive me" }] }],
+    };
+    await sessionHooks.get("compaction")?.(event as never);
+    chmodSync(restricted, 0o700);
+    expect((event as { result?: unknown }).result).toBeUndefined();
+    expect((event as { system: unknown[] }).system.length).toBeGreaterThan(0);
+    await cleanup?.();
+  });
+
+  it("exports a missing session transcript on demand through the retrieval tools", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-lazy-"));
+    dirs.push(dir);
+    const dbPath = join(dir, "memory.db");
+    const { ctx, added } = fakeCtx(
+      dbPath,
+      { retrieval: { dir: join(dir, "transcripts") } },
+      {
+        sessionGet: () => ({ location: { directory: "/home/u/other" } }),
+        context: () => [
+          { type: "user", text: "lazy user line" },
+          { type: "assistant", content: [{ type: "text", text: "lazy assistant line" }] },
+        ],
+      },
+    );
+    const cleanup = await pluginModule.setup(ctx);
+    const byName = new Map(added.map((t) => [t.name, t]));
+
+    const out = await byName
+      .get("memory_session_search")
+      ?.execute({ query: "lazy user", sessionID: "ses_lazy" }, { sessionID: "s1" });
+    expect(out?.content).toContain("lazy user line");
+    expect(
+      existsSync(join(dir, "transcripts", encodeURIComponent("/home/u/other"), "ses_lazy.md")),
+    ).toBe(true);
+
+    // The read tool finds the same exported transcript without a second export.
+    const read = await byName
+      .get("memory_session_read")
+      ?.execute({ sessionID: "ses_lazy", offset: 5, limit: 2 }, { sessionID: "s1" });
+    expect(read?.content).toContain("lazy user line");
+    await cleanup?.();
+  });
+
+  it("exports on demand honoring the configured output cap", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-lazy-"));
+    dirs.push(dir);
+    const { ctx, added } = fakeCtx(
+      join(dir, "memory.db"),
+      { retrieval: { dir: join(dir, "transcripts"), inlineOutputMaxBytes: 1000 } },
+      {
+        sessionGet: () => ({ location: { directory: "/home/u/other" } }),
+        context: () => [
+          {
+            type: "assistant",
+            content: [
+              {
+                type: "tool-result",
+                id: "c1",
+                name: "shell",
+                result: { type: "text", value: "z".repeat(5000) },
+              },
+            ],
+          },
+        ],
+      },
+    );
+    const cleanup = await pluginModule.setup(ctx);
+    const byName = new Map(added.map((t) => [t.name, t]));
+    await byName
+      .get("memory_session_search")
+      ?.execute({ query: "truncated", sessionID: "ses_cap" }, { sessionID: "s1" });
+    const file = join(dir, "transcripts", encodeURIComponent("/home/u/other"), "ses_cap.md");
+    const body = readFileSync(file, "utf8");
+    expect(body).toContain("[truncated; tool call id: c1]");
+    expect(body.length).toBeLessThan(3000);
+    await cleanup?.();
+  });
+
+  it("reports an unexportable session instead of failing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-lazy-"));
+    dirs.push(dir);
+    const { ctx, added } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: join(dir, "transcripts") },
+    });
+    const cleanup = await pluginModule.setup(ctx);
+    const byName = new Map(added.map((t) => [t.name, t]));
+    const out = await byName
+      .get("memory_session_read")
+      ?.execute({ sessionID: "ses_nope" }, { sessionID: "s1" });
+    expect(out?.content).toContain("ses_nope");
+    await cleanup?.();
+  });
+
+  it("memory-continue injects the pointer for a lazy-exported session", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-cmd-"));
+    dirs.push(dir);
+    const { ctx, commands } = fakeCtx(
+      join(dir, "memory.db"),
+      { retrieval: { dir: join(dir, "transcripts") } },
+      {
+        sessionGet: () => ({ location: { directory: "/home/u/other" } }),
+        context: () => [{ type: "user", text: "continued request" }],
+      },
+    );
+    const cleanup = await pluginModule.setup(ctx);
+    const command = commands.find((c) => c.name === "memory-continue");
+    expect(command).toBeDefined();
+
+    await command?.execute({
+      sessionID: "ses_cur",
+      prompt: { text: "ses_old" },
+      delivery: "queue",
+    });
+    const call = (ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+      | { sessionID: string; text: string; delivery: string }
+      | undefined;
+    expect(call?.sessionID).toBe("ses_cur");
+    expect(call?.delivery).toBe("queue");
+    expect(call?.text).toContain("ses_old.md");
+    expect(call?.text).toContain("continued request");
+    expect(call?.text).toContain("Never guess: retrieve.");
+    await cleanup?.();
+  });
+
+  it("memory-continue explains a missing session id argument", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-cmd-"));
+    dirs.push(dir);
+    const { ctx, commands } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: join(dir, "transcripts") },
+    });
+    const cleanup = await pluginModule.setup(ctx);
+    const command = commands.find((c) => c.name === "memory-continue");
+    await command?.execute({
+      sessionID: "ses_cur",
+      prompt: { text: "" },
+      delivery: "steer",
+    });
+    const call = (ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+      | { text: string }
+      | undefined;
+    expect(call?.text).toContain("session id");
+    expect(call?.text).not.toContain("could not be exported");
+    await cleanup?.();
+  });
+
+  it("memory-continue explains an unexportable target", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-cmd-"));
+    dirs.push(dir);
+    const { ctx, commands } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: join(dir, "transcripts") },
+    });
+    const cleanup = await pluginModule.setup(ctx);
+    const command = commands.find((c) => c.name === "memory-continue");
+    await command?.execute({
+      sessionID: "ses_cur",
+      prompt: { text: "ses_ghost" },
+      delivery: "steer",
+    });
+    const call = (ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+      | { text: string }
+      | undefined;
+    expect(call?.text).toContain("ses_ghost");
+    expect(call?.text).toContain("could not be exported");
     await cleanup?.();
   });
 
