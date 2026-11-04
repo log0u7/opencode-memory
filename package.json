@@ -18,11 +18,22 @@
     "./server": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "default": "./dist/tui.js"
     }
   },
   "oc-plugin": [
-    "server"
+    "server",
+    "tui"
   ],
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=2.0.0",
+    "@opentui/core": ">=0.5.0",
+    "@opentui/solid": ">=0.5.0",
+    "solid-js": ">=1.9.0"
+  },
   "files": [
     "dist",
     "README.md",
