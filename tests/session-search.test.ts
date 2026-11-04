@@ -1,11 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { readTranscript, searchTranscripts } from "../src/session-search.js";
 import { writeTranscriptFile } from "../src/compaction.js";
+import { readTranscript, searchTranscripts } from "../src/session-search.js";
 
 const dirs: string[] = [];
 
@@ -102,6 +102,33 @@ describe("searchTranscripts", () => {
     const out = searchTranscripts(dir, SCOPE, { query: "needle", maxBytes: 2000 });
     expect(out.length).toBeLessThan(2400);
     expect(out).toContain("[output capped");
+  });
+
+  it("clamps an oversized byte cap to the tool ceiling", () => {
+    const dir = tmpDir();
+    seed(
+      dir,
+      "ses_big",
+      `## x\n${Array.from({ length: 500 }, (_, i) => `hit line ${i} needle`).join("\n")}`,
+    );
+    const out = searchTranscripts(dir, SCOPE, { query: "needle", maxBytes: 500000 });
+    expect(out.length).toBeLessThanOrEqual(100500);
+  });
+
+  it("skips symlinks instead of following them", () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const dir = tmpDir();
+    const scopeDir = join(dir, encodeURIComponent(SCOPE));
+    mkdirSync(scopeDir, { recursive: true, mode: 0o700 });
+    const target = join(dir, "symlink-target.md");
+    writeTranscriptFile(target, "## user\nsecret via link\n");
+    symlinkSync(target, join(scopeDir, "evil.md"));
+    const out = searchTranscripts(dir, SCOPE, { query: "secret" });
+    expect(out).not.toContain("secret via link");
+    expect(out).toContain("no transcript");
+    expect(readTranscript(dir, SCOPE, { sessionID: "evil" })).toContain("no transcript");
   });
 
   it("reports a clean miss", () => {

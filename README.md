@@ -108,6 +108,8 @@ Options (under the plugin options object):
 
 This feature is V2-only (it hooks the V2 compaction request). The transcript holds the full session history, which can include secrets typed or read during the session: the directory is created `0700` and files `0600` regardless of umask, and the store never leaves the machine.
 
+If the export fails (disk full or permission error), compaction falls back to the model-written summary silently. The failure is environmental, not a logic bug: check disk space and write access on the transcripts directory.
+
 `memory_session_search` accepts `all: true` to search every project's transcripts on the machine, not just the current scope's. A session whose transcript is not on disk yet is exported on demand (from the host's session store) the first time a tool names it: old sessions work without pre-exporting everything.
 
 The `/memory-continue <sessionID>` command brings a past session into the current one: it exports the transcript if needed and injects the retrieval pointer (path, last request, working rule) as a prompt.

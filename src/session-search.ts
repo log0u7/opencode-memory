@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 // Bounded retrieval over exported session transcripts. Everything returns plain text with
@@ -9,6 +9,7 @@ import { join } from "node:path";
 const DEFAULT_CONTEXT_LINES = 3;
 const MAX_CONTEXT_LINES = 10;
 const DEFAULT_MAX_BYTES = 20_000;
+const MAX_MAX_BYTES = 100_000;
 const DEFAULT_READ_LIMIT = 200;
 const MAX_READ_LIMIT = 500;
 
@@ -34,15 +35,31 @@ function scopeDir(dir: string, scope: string): string {
   return join(dir, encodeURIComponent(scope));
 }
 
+function isRegularFile(path: string): boolean {
+  try {
+    return lstatSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function filesInDir(scopeDirPath: string, scope?: string): SessionFile[] {
   return readdirSync(scopeDirPath)
     .filter((name) => name.endsWith(".md"))
-    .map((name) => ({
-      name,
-      path: join(scopeDirPath, name),
-      mtime: statSync(join(scopeDirPath, name)).mtimeMs,
-      ...(scope !== undefined ? { scope } : {}),
-    }));
+    .flatMap((name) => {
+      const path = join(scopeDirPath, name);
+      if (!isRegularFile(path)) {
+        return [];
+      }
+      return [
+        {
+          name,
+          path,
+          mtime: statSync(path).mtimeMs,
+          ...(scope !== undefined ? { scope } : {}),
+        },
+      ];
+    });
 }
 
 /** Newest first, so the sessions the agent most likely continues from come first. */
@@ -91,7 +108,7 @@ function clampInt(value: number | undefined, fallback: number, max: number, min 
 export function searchTranscripts(dir: string, scope: string, input: SearchInput): string {
   const needle = input.query.toLowerCase();
   const context = clampInt(input.contextLines, DEFAULT_CONTEXT_LINES, MAX_CONTEXT_LINES, 0);
-  const budget = clampInt(input.maxBytes, DEFAULT_MAX_BYTES, DEFAULT_MAX_BYTES * 50, 200);
+  const budget = clampInt(input.maxBytes, DEFAULT_MAX_BYTES, MAX_MAX_BYTES, 200);
 
   const files = listSessionFiles(dir, scope, input.all === true);
   if (files.length === 0) {
@@ -160,7 +177,7 @@ export function readTranscript(dir: string, scope: string, input: ReadInput): st
       : 1;
   const requestedLimit = input.limit;
   const limit = clampInt(requestedLimit, DEFAULT_READ_LIMIT, MAX_READ_LIMIT);
-  const budget = clampInt(input.maxBytes, DEFAULT_MAX_BYTES, DEFAULT_MAX_BYTES * 50, 200);
+  const budget = clampInt(input.maxBytes, DEFAULT_MAX_BYTES, MAX_MAX_BYTES, 200);
 
   if (offset > total) {
     return `offset ${offset} is past the end of transcript (${total} lines)`;
