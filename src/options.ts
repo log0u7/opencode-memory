@@ -10,6 +10,14 @@ export type RetrievalOptions = {
   enabled?: boolean;
   dir?: string;
   inlineOutputMaxBytes?: number;
+  /** Delete transcripts older than this many days. 0 (default) disables age-based deletion. */
+  retentionDays?: number;
+  /** Always keep this many newest transcripts per scope, regardless of age. Default 10. */
+  keepRecent?: number;
+  /** Hard cap on transcripts per scope (newest kept). 0 (default) disables the cap. */
+  maxSessions?: number;
+  /** Run the retention sweep automatically when enabled. Default true. */
+  autoSweep?: boolean;
 };
 
 export type PluginOptions = {
@@ -52,16 +60,41 @@ export type RetrievalConfig = {
   enabled: boolean;
   dir: string;
   inlineOutputMaxBytes: number;
+  retentionDays: number;
+  keepRecent: number;
+  maxSessions: number;
+  autoSweep: boolean;
 };
 
 export function parseRetrievalConfig(options?: PluginOptions): RetrievalConfig {
   const bytes = options?.retrieval?.inlineOutputMaxBytes;
+  const retentionDays =
+    typeof options?.retrieval?.retentionDays === "number" &&
+    Number.isFinite(options.retrieval.retentionDays) &&
+    options.retrieval.retentionDays > 0
+      ? Math.floor(options.retrieval.retentionDays)
+      : 0;
+  const keepRecentRaw = options?.retrieval?.keepRecent;
+  const keepRecent =
+    typeof keepRecentRaw === "number" && Number.isFinite(keepRecentRaw) && keepRecentRaw > 0
+      ? Math.max(1, Math.floor(keepRecentRaw))
+      : 10;
+  const maxSessionsRaw = options?.retrieval?.maxSessions;
+  const maxSessions =
+    typeof maxSessionsRaw === "number" && Number.isFinite(maxSessionsRaw) && maxSessionsRaw > 0
+      ? Math.floor(maxSessionsRaw)
+      : 0;
+  const autoSweep = options?.retrieval?.autoSweep !== false;
   return {
     enabled: options?.retrieval?.enabled !== false,
     dir: defaultTranscriptsDir(options),
     // 128 keeps the truncation marker smaller than the cap for degenerate configs.
     inlineOutputMaxBytes:
       typeof bytes === "number" && bytes > 0 ? Math.max(128, bytes) : INLINE_OUTPUT_MAX_BYTES,
+    retentionDays,
+    keepRecent,
+    maxSessions,
+    autoSweep,
   };
 }
 

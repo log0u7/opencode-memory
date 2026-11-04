@@ -197,7 +197,7 @@ describe("v1 and v2 share one behaviour", () => {
 });
 
 describe("opencode-memory v2 setup", () => {
-  it("registers the six memory tools", async () => {
+  it("registers the memory tools", async () => {
     const dbPath = tmpDbPath();
     const { ctx, added } = fakeCtx(dbPath);
 
@@ -212,6 +212,8 @@ describe("opencode-memory v2 setup", () => {
       "memory_session_read",
       "memory_session_search",
       "memory_stats",
+      "memory_transcript_cleanup",
+      "memory_transcript_list",
     ]);
     await cleanup?.();
   });
@@ -889,5 +891,163 @@ describe("opencode-memory v2 setup", () => {
     expect(() => sessionHooks.get("context")?.(event)).not.toThrow();
     expect(event.system).toHaveLength(1);
     expect(existsSync(dbPath)).toBe(false);
+  });
+});
+
+describe("transcript retention tools", () => {
+  it("memory_transcript_list reports transcripts", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-rt-"));
+    dirs.push(dir);
+    const tdir = join(dir, "transcripts");
+    const { ctx, added } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: tdir, retentionDays: 30, keepRecent: 1 },
+    });
+    // seed a transcript
+    mkdirSync(join(tdir, encodeURIComponent("/home/u/project")), { recursive: true });
+    writeTranscriptFile(join(tdir, encodeURIComponent("/home/u/project"), "ses_a.md"), "# t");
+    const cleanup = await pluginModule.setup(ctx);
+    const list = added.find((t) => t.name === "memory_transcript_list");
+    const out = await list?.execute({ all: true }, { sessionID: "s1" });
+    const parsed = JSON.parse(out?.content ?? "{}");
+    expect(parsed.total).toBe(1);
+    expect(parsed.transcripts[0].sessionID).toBe("ses_a");
+    await cleanup?.();
+  });
+
+  it("memory_transcript_cleanup dry run does not delete", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-rt-"));
+    dirs.push(dir);
+    const tdir = join(dir, "transcripts");
+    const { ctx, added } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: tdir, retentionDays: 1, keepRecent: 1 },
+    });
+    mkdirSync(join(tdir, encodeURIComponent("/home/u/project")), { recursive: true });
+    const p = join(tdir, encodeURIComponent("/home/u/project"), "ses_old.md");
+    writeTranscriptFile(p, "# t");
+    // make it old
+    const { utimesSync } = await import("node:fs");
+    utimesSync(p, (Date.now() - 60 * 86400000) / 1000, (Date.now() - 60 * 86400000) / 1000);
+    // need a newer one to avoid keepRecent protection
+    const p2 = join(tdir, encodeURIComponent("/home/u/project"), "ses_new.md");
+    writeTranscriptFile(p2, "# t");
+    const cleanup = await pluginModule.setup(ctx);
+    const tool = added.find((t) => t.name === "memory_transcript_cleanup");
+    const out = await tool?.execute({ dryRun: true, allScopes: true }, { sessionID: "s1" });
+    expect(out?.content).toContain("dry run");
+    expect(out?.content).toContain("ses_old");
+    // file still there
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(p)).toBe(true);
+    await cleanup?.();
+  });
+
+  it("memory_transcript_cleanup apply removes eligible files", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-rt-"));
+    dirs.push(dir);
+    const tdir = join(dir, "transcripts");
+    const { ctx, added } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: tdir, retentionDays: 1, keepRecent: 1 },
+    });
+    mkdirSync(join(tdir, encodeURIComponent("/home/u/project")), { recursive: true });
+    const p = join(tdir, encodeURIComponent("/home/u/project"), "ses_old.md");
+    writeTranscriptFile(p, "# t");
+    const { utimesSync, existsSync } = await import("node:fs");
+    utimesSync(p, (Date.now() - 60 * 86400000) / 1000, (Date.now() - 60 * 86400000) / 1000);
+    const p2 = join(tdir, encodeURIComponent("/home/u/project"), "ses_new.md");
+    writeTranscriptFile(p2, "# t");
+    const cleanup = await pluginModule.setup(ctx);
+    const tool = added.find((t) => t.name === "memory_transcript_cleanup");
+    const out = await tool?.execute({ apply: true, allScopes: true }, { sessionID: "s1" });
+    expect(out?.content).toContain("removed 1");
+    expect(existsSync(p)).toBe(false);
+    expect(existsSync(p2)).toBe(true);
+    await cleanup?.();
+  });
+
+  it("memory_transcript_cleanup targeted by sessionIDs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-rt-"));
+    dirs.push(dir);
+    const tdir = join(dir, "transcripts");
+    const { ctx, added } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: tdir, retentionDays: 0, keepRecent: 1 },
+    });
+    mkdirSync(join(tdir, encodeURIComponent("/home/u/project")), { recursive: true });
+    const p = join(tdir, encodeURIComponent("/home/u/project"), "ses_target.md");
+    writeTranscriptFile(p, "# t");
+    const cleanup = await pluginModule.setup(ctx);
+    const tool = added.find((t) => t.name === "memory_transcript_cleanup");
+    const out = await tool?.execute(
+      { apply: true, allScopes: true, sessionIDs: ["ses_target"] },
+      { sessionID: "s1" },
+    );
+    expect(out?.content).toContain("removed 1");
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(p)).toBe(false);
+    await cleanup?.();
+  });
+
+  it("/memory-cleanup command runs dry run by default", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-rt-"));
+    dirs.push(dir);
+    const tdir = join(dir, "transcripts");
+    const { ctx, commands } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: tdir, retentionDays: 1, keepRecent: 1 },
+    });
+    mkdirSync(join(tdir, encodeURIComponent("/home/u/project")), { recursive: true });
+    const p = join(tdir, encodeURIComponent("/home/u/project"), "ses_old.md");
+    writeTranscriptFile(p, "# t");
+    const { utimesSync } = await import("node:fs");
+    utimesSync(p, (Date.now() - 60 * 86400000) / 1000, (Date.now() - 60 * 86400000) / 1000);
+    const p2 = join(tdir, encodeURIComponent("/home/u/project"), "ses_new.md");
+    writeTranscriptFile(p2, "# t");
+    const cleanup = await pluginModule.setup(ctx);
+    const cmd = commands.find((c) => c.name === "memory-cleanup");
+    expect(cmd).toBeDefined();
+    await cmd?.execute({ sessionID: "ses_cur", prompt: { text: "" }, delivery: "steer" });
+    const call = (ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+      | { text: string }
+      | undefined;
+    expect(call?.text).toContain("dry run");
+    await cleanup?.();
+  });
+
+  it("/memory-cleanup command applies when asked", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-rt-"));
+    dirs.push(dir);
+    const tdir = join(dir, "transcripts");
+    const { ctx, commands } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: tdir, retentionDays: 1, keepRecent: 1 },
+    });
+    mkdirSync(join(tdir, encodeURIComponent("/home/u/project")), { recursive: true });
+    const p = join(tdir, encodeURIComponent("/home/u/project"), "ses_old.md");
+    writeTranscriptFile(p, "# t");
+    const { utimesSync, existsSync } = await import("node:fs");
+    utimesSync(p, (Date.now() - 60 * 86400000) / 1000, (Date.now() - 60 * 86400000) / 1000);
+    const p2 = join(tdir, encodeURIComponent("/home/u/project"), "ses_new.md");
+    writeTranscriptFile(p2, "# t");
+    const cleanup = await pluginModule.setup(ctx);
+    const cmd = commands.find((c) => c.name === "memory-cleanup");
+    await cmd?.execute({ sessionID: "ses_cur", prompt: { text: "apply" }, delivery: "steer" });
+    const call = (ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+      | { text: string }
+      | undefined;
+    expect(call?.text).toContain("applied");
+    expect(existsSync(p)).toBe(false);
+    await cleanup?.();
+  });
+
+  it("memory_transcript_list returns empty when none", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-rt-"));
+    dirs.push(dir);
+    const tdir = join(dir, "transcripts");
+    const { ctx, added } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: tdir, retentionDays: 0 },
+    });
+    const cleanup = await pluginModule.setup(ctx);
+    const list = added.find((t) => t.name === "memory_transcript_list");
+    const out = await list?.execute({ all: true }, { sessionID: "s1" });
+    const parsed = JSON.parse(out?.content ?? "{}");
+    expect(parsed.total).toBe(0);
+    await cleanup?.();
   });
 });

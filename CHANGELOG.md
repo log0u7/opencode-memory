@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Transcript retention: opt-in policy (off by default) to sweep exported
+  session transcripts. `retrieval.retentionDays` (age threshold),
+  `retrieval.keepRecent` (safety floor, default 10), `retrieval.maxSessions`
+  (hard cap), `retrieval.autoSweep` (default true). Age is based on the most
+  recent of access/modification time, so a transcript still being read is kept.
+- `memory_transcript_list` tool: storage visibility (scope, size, age, last touch).
+- `memory_transcript_cleanup` tool: dry run by default; `apply:true` removes
+  eligible files. Override policy per call or target specific session ids.
+- `/memory-cleanup` command: runs the sweep (dry run unless `apply`).
+- Auto-sweep 30s after startup and after each compaction, when enabled.
+
 ## [0.6.2] - 2026-11-04
 
 ### Fixed

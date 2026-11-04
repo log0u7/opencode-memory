@@ -63,6 +63,8 @@ memory_stats()
 | `memory_restore` | `id` | Put a trashed entry back, wherever it lived. |
 | `memory_session_search` | `query`, `sessionID?`, `contextLines?`, `maxBytes?` | Search exported session transcripts for exact lines (case-insensitive), with line numbers and surrounding context. |
 | `memory_session_read` | `sessionID`, `offset?`, `limit?`, `maxBytes?` | Read a numbered window of one exported transcript by 1-based line. |
+| `memory_transcript_list` | `all?`, `scope?` | List exported transcripts with size, age and last touch (storage visibility). |
+| `memory_transcript_cleanup` | `dryRun?`, `apply?`, `allScopes?`, `sessionIDs?`, `retentionDays?`, `keepRecent?`, `maxSessions?` | Sweep transcripts per retention policy; dry run by default. |
 
 Entry `kind` is free-form; conventions that work well: `decision`, `fact`, `preference`, `gotcha`, `lesson`, `compaction`.
 
@@ -105,6 +107,10 @@ Options (under the plugin options object):
 - `enabled` (default `true`): `false` restores the plain summary flow and hides the two retrieval tools.
 - `dir` (default `~/.local/share/opencode-memory/transcripts`): where transcripts are exported.
 - `inlineOutputMaxBytes` (default 50000): tool output above this size is truncated head+tail in the transcript, with the tool call id kept in the marker so the full output stays recoverable from OpenCode's tool-output store.
+- `retentionDays` (default 0, disabled): transcripts whose last touch is older than this many days become eligible for removal. 0 keeps everything (recommended default).
+- `keepRecent` (default 10): safety floor, never remove the N newest transcripts of a scope even if they are old.
+- `maxSessions` (default 0, unlimited): hard cap on transcripts per scope (newest kept).
+- `autoSweep` (default true): when `retentionDays` or `maxSessions` is set, run a sweep 30s after startup and after each compaction. Set false to keep manual control only.
 
 This feature is V2-only (it hooks the V2 compaction request). The transcript holds the full session history, which can include secrets typed or read during the session: the directory is created `0700` and files `0600` regardless of umask, and the store never leaves the machine.
 
@@ -113,6 +119,8 @@ If the export fails (disk full or permission error), compaction falls back to th
 `memory_session_search` accepts `all: true` to search every project's transcripts on the machine, not just the current scope's. A session whose transcript is not on disk yet is exported on demand (from the host's session store) the first time a tool names it: old sessions work without pre-exporting everything.
 
 The `/memory-continue <sessionID>` command brings a past session into the current one: it exports the transcript if needed and injects the retrieval pointer (path, last request, working rule) as a prompt.
+
+The `/memory-cleanup` command runs the retention sweep (dry run by default; pass `apply` to delete) and reports eligible files. Auto-sweep, when enabled, runs 30s after startup and after each compaction.
 
 Measured on a live ~40k-token session with GLM-5.3-Flash (openrouter): the model-written summary cost 39,620 input tokens and $0.0018; the retrieval pointer compaction completed with no model call at all. The agent then recovered an exact value planted in the compacted session from a fresh session via `memory_session_search`. Live measurement on the local 30k-context model was not possible: a fresh session already overflows its window before any history exists, so compaction cannot run on it (model limitation, unrelated to this feature).
 

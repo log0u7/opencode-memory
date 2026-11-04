@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 
 import { Plugin } from "@opencode/plugin";
 
@@ -29,6 +29,12 @@ import {
 import type { TranscriptMessage } from "./transcripts.js";
 import { renderTranscript, sessionInfoToMessages } from "./transcripts.js";
 import { readTranscript, searchTranscripts } from "./session-search.js";
+import {
+  collectTranscripts,
+  effectiveLastTouch,
+  formatSweepResult,
+  sweepTranscripts,
+} from "./transcript-retention.js";
 
 const textPart = (text: string) => ({ type: "text" as const, text });
 
@@ -152,6 +158,28 @@ export const MemoryV2 = Plugin.define({
               const path = transcriptFilePath(retrieval.dir, scope, target);
               text = compactionSummary(path, transcriptExcerpt(path));
             }
+            await ctx.session.prompt({ sessionID, text, delivery });
+          },
+        });
+        editor.add({
+          name: "memory-cleanup",
+          description:
+            "Sweep exported session transcripts per the retention policy (dry run by default): " +
+            "report eligible files, then remove when confirmed.",
+          execute: async ({ sessionID, prompt, delivery }) => {
+            const arg = prompt.text.trim().toLowerCase();
+            const dryRun = arg !== "apply" && arg !== "run" && arg !== "yes";
+            const result = sweepTranscripts(retrieval.dir, {
+              retentionDays: retrieval.retentionDays,
+              keepRecent: retrieval.keepRecent,
+              maxSessions: retrieval.maxSessions,
+              protectedSessionID: sessionID,
+              dryRun,
+              now: Date.now(),
+            });
+            const text =
+              `${dryRun ? "dry run (pass 'apply' to delete)" : "applied"}\n` +
+              formatSweepResult(result, dryRun);
             await ctx.session.prompt({ sessionID, text, delivery });
           },
         });
@@ -395,6 +423,186 @@ export const MemoryV2 = Plugin.define({
           };
         },
       });
+
+      editor.add({
+        name: "memory_transcript_list",
+        description:
+          "List exported session transcripts with scope, size, age and last-touch time, " +
+          "so storage usage is visible before any cleanup.",
+        input: {
+          type: "object",
+          properties: {
+            all: {
+              type: "boolean",
+              description:
+                "List every project's transcripts on this machine, not just this project's",
+            },
+            scope: { type: "string", description: "Limit to one scope key" },
+          },
+          additionalProperties: false,
+        },
+        async execute(args) {
+          const a = args as { all?: boolean; scope?: string };
+          const entries = collectTranscripts(retrieval.dir);
+          const filtered =
+            a.all === true
+              ? entries
+              : a.scope
+                ? entries.filter((e) => e.scope === a.scope)
+                : entries.filter((e) => e.scope === projectScope);
+          const now = Date.now();
+          const rows = filtered
+            .map((e) => ({
+              scope: e.scope,
+              sessionID: e.sessionID,
+              bytes: e.size,
+              ageDays: Math.max(
+                0,
+                Math.floor((now - effectiveLastTouch(e)) / (24 * 60 * 60 * 1000)),
+              ),
+              lastTouch: new Date(effectiveLastTouch(e)).toISOString(),
+            }))
+            .sort((x, y) => y.ageDays - x.ageDays || x.sessionID.localeCompare(y.sessionID));
+          // Keep output bounded.
+          const capped = rows.slice(0, 200);
+          return {
+            content: JSON.stringify(
+              {
+                total: rows.length,
+                shown: capped.length,
+                transcripts: capped,
+              },
+              null,
+              2,
+            ),
+          };
+        },
+      });
+
+      editor.add({
+        name: "memory_transcript_cleanup",
+        description:
+          "Sweep exported session transcripts per the retention policy. Defaults to a dry run " +
+          "(report only). Pass apply:true to actually remove. retentionDays/keepRecent/maxSessions " +
+          "override the configured policy for this call; sessionIDs limits the sweep to those sessions.",
+        input: {
+          type: "object",
+          properties: {
+            dryRun: { type: "boolean", description: "Report only, do not delete (default true)" },
+            apply: { type: "boolean", description: "Actually remove eligible transcripts" },
+            allScopes: {
+              type: "boolean",
+              description: "Sweep every project's transcripts, not just this project's",
+            },
+            sessionIDs: {
+              type: "array",
+              items: { type: "string" },
+              description: "Limit the sweep to these session ids",
+            },
+            retentionDays: { type: "number", description: "Override configured retention days" },
+            keepRecent: { type: "number", description: "Override configured keepRecent floor" },
+            maxSessions: { type: "number", description: "Override configured maxSessions cap" },
+          },
+          additionalProperties: false,
+        },
+        async execute(args, context) {
+          const a = args as {
+            dryRun?: boolean;
+            apply?: boolean;
+            allScopes?: boolean;
+            sessionIDs?: string[];
+            retentionDays?: number;
+            keepRecent?: number;
+            maxSessions?: number;
+          };
+          const dryRun = a.apply === true ? false : a.dryRun !== false;
+          // When sessionIDs provided, treat as targeted: disable age/cap triggers by setting
+          // retentionDays 0 and maxSessions 0, but force those specific ids as candidates by
+          // a separate path. Simpler: sweep all then filter candidates to the requested ids.
+          const result = sweepTranscripts(retrieval.dir, {
+            retentionDays:
+              a.retentionDays !== undefined
+                ? a.retentionDays
+                : a.sessionIDs && a.sessionIDs.length > 0
+                  ? 1
+                  : retrieval.retentionDays,
+            keepRecent:
+              a.keepRecent !== undefined
+                ? a.keepRecent
+                : a.sessionIDs && a.sessionIDs.length > 0
+                  ? 0
+                  : retrieval.keepRecent,
+            maxSessions:
+              a.maxSessions !== undefined
+                ? a.maxSessions
+                : a.sessionIDs && a.sessionIDs.length > 0
+                  ? 0
+                  : retrieval.maxSessions,
+            protectedSessionID: context.sessionID,
+            dryRun,
+            now: Date.now(),
+          });
+          // Targeted filter.
+          let filtered = result;
+          if (a.sessionIDs && a.sessionIDs.length > 0) {
+            const wanted = new Set(a.sessionIDs);
+            const cand = result.candidates.filter((c) => wanted.has(c.sessionID));
+            // If targeted, mark all requested (existing) as candidates regardless of age.
+            // Rebuild candidates from collected entries for requested ids not already eligible.
+            const entries = collectTranscripts(retrieval.dir);
+            const extra: typeof result.candidates = [];
+            for (const e of entries) {
+              if (!wanted.has(e.sessionID)) continue;
+              if (cand.some((c) => c.path === e.path)) continue;
+              if (e.sessionID === context.sessionID) continue;
+              extra.push({
+                path: e.path,
+                scope: e.scope,
+                sessionID: e.sessionID,
+                reason: "targeted",
+                bytes: e.size,
+                ageDays: Math.max(
+                  0,
+                  Math.floor((Date.now() - effectiveLastTouch(e)) / (24 * 60 * 60 * 1000)),
+                ),
+              });
+            }
+            const allCand = [...cand, ...extra];
+            // Apply deletion for targeted if not dryRun.
+            const removed: typeof allCand = [];
+            const errors: string[] = [];
+            let bytesFreed = 0;
+            if (!dryRun) {
+              for (const c of allCand) {
+                try {
+                  unlinkSync(c.path);
+                  removed.push(c);
+                  bytesFreed += c.bytes;
+                } catch (err) {
+                  errors.push(`${c.path}: ${err instanceof Error ? err.message : String(err)}`);
+                }
+              }
+            }
+            filtered = {
+              candidates: allCand,
+              removed: dryRun ? [] : removed,
+              kept: result.kept,
+              bytesFreed: dryRun ? 0 : bytesFreed,
+              errors,
+            };
+          }
+          // Scope filtering for allScopes=false (default): only current project scope.
+          if (!a.allScopes && !(a.sessionIDs && a.sessionIDs.length > 0)) {
+            // Already swept all scopes in sweepTranscripts (it walks all). Restrict results to projectScope.
+            filtered = {
+              ...filtered,
+              candidates: filtered.candidates.filter((c) => c.scope === projectScope),
+              removed: filtered.removed.filter((c) => c.scope === projectScope),
+            };
+          }
+          return { content: formatSweepResult(filtered, dryRun) };
+        },
+      });
     });
 
     // The v1 system transform maps to the v2 context hook: guidance first, then the
@@ -448,7 +656,50 @@ export const MemoryV2 = Plugin.define({
       } catch {
         // Silent fallback to the documented summary flow.
       }
+      // Opportunistic retention sweep after an export: cheap, local, never blocks compaction.
+      if (retrieval.retentionDays > 0 || retrieval.maxSessions > 0) {
+        try {
+          sweepTranscripts(retrieval.dir, {
+            retentionDays: retrieval.retentionDays,
+            keepRecent: retrieval.keepRecent,
+            maxSessions: retrieval.maxSessions,
+            protectedSessionID: event.sessionID,
+            dryRun: false,
+            now: Date.now(),
+          });
+        } catch {
+          // Sweep failures are environmental; never affect compaction.
+        }
+      }
     });
+
+    // Optional, delayed retention sweep: opt-in (retentionDays > 0), never blocks startup,
+    // and never runs during the first 30s so it does not compete with session init.
+    if (
+      retrieval.enabled &&
+      retrieval.autoSweep &&
+      (retrieval.retentionDays > 0 || retrieval.maxSessions > 0)
+    ) {
+      const timer = setTimeout(() => {
+        if (disposed) {
+          return;
+        }
+        try {
+          sweepTranscripts(retrieval.dir, {
+            retentionDays: retrieval.retentionDays,
+            keepRecent: retrieval.keepRecent,
+            maxSessions: retrieval.maxSessions,
+            dryRun: false,
+            now: Date.now(),
+          });
+        } catch {
+          // Environmental; ignore.
+        }
+      }, 30_000);
+      if (typeof timer.unref === "function") {
+        timer.unref();
+      }
+    }
 
     const cleanup = async () => {
       disposed = true;
