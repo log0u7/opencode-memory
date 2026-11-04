@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Context retrieval: compaction no longer pays for a model-written summary. A
+  compaction hook exports the exact transcript being summarized to
+  `~/.local/share/opencode-memory/transcripts/<scope>/<sessionID>.md`
+  (append-only markdown, `0700`/`0600`) and records a short pointer as the
+  compaction result, which skips the summary model call entirely. Two bounded
+  retrieval tools, `memory_session_search` and `memory_session_read`, let the
+  agent pull exact lines (errors, paths, numbers, decisions) from any exported
+  transcript of the project, when it needs them.
+- Cross-scope search: `memory_session_search` accepts `all: true` to search
+  every project's exported transcripts on the machine.
+- On-demand export: naming a session that has no transcript yet (in
+  `memory_session_search` or `memory_session_read`) exports it from the host's
+  session store first, under that session's own scope.
+- `/memory-continue <sessionID>` command: exports the session's transcript if
+  needed and injects the retrieval pointer into the current session.
+- Approach inspired by Mainplane's context retrieval
+  (https://github.com/mainplane-ai/mainplane).
+- Plugin options `retrieval.enabled` (default `true`), `retrieval.dir`,
+  `retrieval.inlineOutputMaxBytes` (default 50000). Disabling restores the
+  plain summary flow and hides the retrieval tools.
+
 ## [0.5.1] - 2026-10-24
 
 ### Fixed
