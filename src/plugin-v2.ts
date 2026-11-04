@@ -173,6 +173,7 @@ export const MemoryV2 = Plugin.define({
               retentionDays: retrieval.retentionDays,
               keepRecent: retrieval.keepRecent,
               maxSessions: retrieval.maxSessions,
+              scope: projectScope,
               protectedSessionID: sessionID,
               dryRun,
               now: Date.now(),
@@ -531,7 +532,7 @@ export const MemoryV2 = Plugin.define({
               a.keepRecent !== undefined ? a.keepRecent : targeted ? 0 : retrieval.keepRecent,
             maxSessions:
               a.maxSessions !== undefined ? a.maxSessions : targeted ? 0 : retrieval.maxSessions,
-            scope: targeted || a.allScopes === true ? undefined : projectScope,
+            scope: a.allScopes === true ? undefined : projectScope,
             protectedSessionID: context.sessionID,
             dryRun,
             now: Date.now(),
@@ -543,7 +544,10 @@ export const MemoryV2 = Plugin.define({
             const cand = result.candidates.filter((c) => wanted.has(c.sessionID));
             // If targeted, mark all requested (existing) as candidates regardless of age.
             // Rebuild candidates from collected entries for requested ids not already eligible.
-            const entries = collectTranscripts(retrieval.dir);
+            let entries = collectTranscripts(retrieval.dir);
+            if (a.allScopes !== true) {
+              entries = entries.filter((e) => e.scope === projectScope);
+            }
             const extra: typeof result.candidates = [];
             for (const e of entries) {
               if (!wanted.has(e.sessionID)) continue;
@@ -657,6 +661,7 @@ export const MemoryV2 = Plugin.define({
             retentionDays: retrieval.retentionDays,
             keepRecent: retrieval.keepRecent,
             maxSessions: retrieval.maxSessions,
+            scope: projectScope,
             protectedSessionID: event.sessionID,
             dryRun: false,
             now: Date.now(),
@@ -683,6 +688,7 @@ export const MemoryV2 = Plugin.define({
             retentionDays: retrieval.retentionDays,
             keepRecent: retrieval.keepRecent,
             maxSessions: retrieval.maxSessions,
+            scope: projectScope,
             dryRun: false,
             now: Date.now(),
           });
