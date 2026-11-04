@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+
 import { Plugin } from "@opencode/plugin";
 
 import { openMemoryDb, type MemoryDb } from "./lib/db.js";
@@ -13,8 +15,20 @@ import {
   COMPACTION_CONTEXT,
   defaultScope,
   defaultDbPath,
+  parseRetrievalConfig,
   type PluginOptions,
 } from "./options.js";
+import { canonicalScope } from "./lib/store.js";
+import {
+  compactionSummary,
+  handleCompaction,
+  transcriptExcerpt,
+  transcriptFilePath,
+  writeTranscriptFile,
+} from "./compaction.js";
+import type { TranscriptMessage } from "./transcripts.js";
+import { renderTranscript, sessionInfoToMessages } from "./transcripts.js";
+import { readTranscript, searchTranscripts } from "./session-search.js";
 
 const textPart = (text: string) => ({ type: "text" as const, text });
 
@@ -63,7 +77,86 @@ export const MemoryV2 = Plugin.define({
 
     // Request and compaction hooks carry no directory: the instance scope is the project.
     const projectScope = defaultScope(undefined, ctx.location.directory);
+    const retrieval = parseRetrievalConfig(options);
     const injected = oncePerSession();
+
+    /** Scope that holds the transcript for `sessionID`: the project scope when the file is
+     * already there, otherwise the session's own scope after an on-demand export (lazy, so
+     * old sessions work without pre-exporting everything). Null: unknown session or empty
+     * history. */
+    const ensureTranscript = async (sessionID: string): Promise<string | null> => {
+      if (disposed) {
+        return null;
+      }
+      if (existsSync(transcriptFilePath(retrieval.dir, projectScope, sessionID))) {
+        return projectScope;
+      }
+      // An unknown session id is an expected miss here, not an exceptional failure.
+      let info: unknown;
+      try {
+        info = await ctx.session.get({ sessionID });
+      } catch {
+        return null;
+      }
+      const directory = (info as { location?: { directory?: string } } | undefined)?.location
+        ?.directory;
+      if (typeof directory !== "string" || directory.length === 0) {
+        return null;
+      }
+      const scope = canonicalScope(undefined, directory);
+      if (existsSync(transcriptFilePath(retrieval.dir, scope, sessionID))) {
+        return scope;
+      }
+      const context = await ctx.session.context({ sessionID });
+      const messages = sessionInfoToMessages(context);
+      if (messages.length === 0) {
+        return null;
+      }
+      const path = transcriptFilePath(retrieval.dir, scope, sessionID);
+      writeTranscriptFile(
+        path,
+        renderTranscript(
+          messages,
+          { sessionID, scope },
+          {
+            inlineOutputMaxBytes: retrieval.inlineOutputMaxBytes,
+          },
+        ),
+      );
+      return scope;
+    };
+    const unexportable = (sessionID: string): string =>
+      `no transcript for session ${sessionID}; it could not be exported (unknown session or empty history)`;
+
+    if (retrieval.enabled) {
+      await ctx.command.transform((editor) => {
+        editor.add({
+          name: "memory-continue",
+          description:
+            "Continue a past session in this one: export its transcript if needed and inject the retrieval pointer",
+          execute: async ({ sessionID, prompt, delivery }) => {
+            const target = prompt.text.trim();
+            if (target.length === 0) {
+              await ctx.session.prompt({
+                sessionID,
+                text: "Pass the session id to continue: /memory-continue <sessionID>. The session's transcript is exported on demand and the retrieval pointer lands here.",
+                delivery,
+              });
+              return;
+            }
+            const scope = await ensureTranscript(target);
+            let text: string;
+            if (scope === null) {
+              text = unexportable(target);
+            } else {
+              const path = transcriptFilePath(retrieval.dir, scope, target);
+              text = compactionSummary(path, transcriptExcerpt(path));
+            }
+            await ctx.session.prompt({ sessionID, text, delivery });
+          },
+        });
+      });
+    }
 
     await ctx.tool.transform((editor) => {
       editor.add({
@@ -199,6 +292,109 @@ export const MemoryV2 = Plugin.define({
           return { content: ops.restore(a) };
         },
       });
+
+      if (!retrieval.enabled) {
+        return;
+      }
+
+      editor.add({
+        name: "memory_session_search",
+        description:
+          "Search past session transcripts (verbatim compaction exports) for exact lines: " +
+          "errors, paths, numbers, decisions. Returns matching lines with line numbers and " +
+          "surrounding context. After a compaction, retrieve facts here instead of guessing.",
+        input: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Exact text to find, case-insensitive" },
+            sessionID: {
+              type: "string",
+              description: "Limit to one session; it is exported on demand if not on disk yet",
+            },
+            all: {
+              type: "boolean",
+              description:
+                "Search every project's transcripts on this machine, not just this project's",
+            },
+            contextLines: {
+              type: "number",
+              description: "Context lines around each match (default 3, max 10)",
+            },
+            maxBytes: { type: "number", description: "Output byte cap (default 20000)" },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+        async execute(args) {
+          const a = args as {
+            query: string;
+            sessionID?: string;
+            all?: boolean;
+            contextLines?: number;
+            maxBytes?: number;
+          };
+          if (a.sessionID !== undefined) {
+            const scope = await ensureTranscript(a.sessionID);
+            if (scope === null) {
+              return { content: unexportable(a.sessionID) };
+            }
+            return {
+              content: searchTranscripts(retrieval.dir, scope, {
+                query: a.query,
+                sessionID: a.sessionID,
+                ...(a.contextLines !== undefined ? { contextLines: a.contextLines } : {}),
+                ...(a.maxBytes !== undefined ? { maxBytes: a.maxBytes } : {}),
+              }),
+            };
+          }
+          return {
+            content: searchTranscripts(retrieval.dir, projectScope, {
+              query: a.query,
+              all: a.all === true,
+              ...(a.contextLines !== undefined ? { contextLines: a.contextLines } : {}),
+              ...(a.maxBytes !== undefined ? { maxBytes: a.maxBytes } : {}),
+            }),
+          };
+        },
+      });
+
+      editor.add({
+        name: "memory_session_read",
+        description:
+          "Read a numbered window of a past session transcript by 1-based line number. Use it " +
+          "after memory_session_search to pull the exact block around a match.",
+        input: {
+          type: "object",
+          properties: {
+            sessionID: { type: "string", description: "Session whose transcript to read" },
+            offset: { type: "number", description: "1-based starting line (default 1)" },
+            limit: { type: "number", description: "Max lines (default 200, max 500)" },
+            maxBytes: { type: "number", description: "Output byte cap (default 20000)" },
+          },
+          required: ["sessionID"],
+          additionalProperties: false,
+        },
+        async execute(args) {
+          const a = args as {
+            sessionID: string;
+            offset?: number;
+            limit?: number;
+            maxBytes?: number;
+          };
+          const scope = await ensureTranscript(a.sessionID);
+          if (scope === null) {
+            return { content: unexportable(a.sessionID) };
+          }
+          return {
+            content: readTranscript(retrieval.dir, scope, {
+              sessionID: a.sessionID,
+              ...(a.offset !== undefined ? { offset: a.offset } : {}),
+              ...(a.limit !== undefined ? { limit: a.limit } : {}),
+              ...(a.maxBytes !== undefined ? { maxBytes: a.maxBytes } : {}),
+            }),
+          };
+        },
+      });
     });
 
     // The v1 system transform maps to the v2 context hook: guidance first, then the
@@ -216,7 +412,9 @@ export const MemoryV2 = Plugin.define({
       }
     });
 
-    // experimental.session.compacting -> compaction hook
+    // experimental.session.compacting -> compaction hook. When retrieval is enabled the
+    // transcript is exported verbatim and event.result replaces the model-written summary:
+    // the summary model call is skipped entirely.
     await ctx.session.hook("compaction", (event) => {
       event.system.push(textPart(COMPACTION_CONTEXT));
       if (disposed) {
@@ -225,6 +423,30 @@ export const MemoryV2 = Plugin.define({
       const inventory = memoryInventory(getDb, dbPath, projectScope);
       if (inventory !== null) {
         event.system.push(textPart(inventory));
+      }
+      if (!retrieval.enabled) {
+        return;
+      }
+      // Host Message instances viewed structurally here: this hook is the boundary where
+      // the host's shape is parsed once into the renderer's input type.
+      const messages = (event.messages ?? []) as unknown as ReadonlyArray<TranscriptMessage>;
+      const model = event.model;
+      // An export failure must not kill compaction: leave event.result unset and the host
+      // falls back to the model-written summary. Expected failures are environmental
+      // (ENOSPC, EACCES on the data dir), not logic bugs.
+      try {
+        const { summary } = handleCompaction(
+          {
+            sessionID: event.sessionID,
+            ...(model ? { model: `${model.providerID}/${model.id}` } : {}),
+            messages,
+          },
+          { dir: retrieval.dir, scope: projectScope },
+          { inlineOutputMaxBytes: retrieval.inlineOutputMaxBytes },
+        );
+        event.result = { summary };
+      } catch {
+        // Silent fallback to the documented summary flow.
       }
     });
 

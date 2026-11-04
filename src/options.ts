@@ -1,13 +1,21 @@
 import { canonicalScope } from "./lib/store.js";
+import { INLINE_OUTPUT_MAX_BYTES } from "./transcripts.js";
 
 // Shared option plumbing and scope constants for both host generations. This
 // module sits in the STATIC import graph of the package (the v2 adapter
 // imports it directly), so it must never import a host-provided package: see
 // scripts/smoke-dist.mjs.
 
+export type RetrievalOptions = {
+  enabled?: boolean;
+  dir?: string;
+  inlineOutputMaxBytes?: number;
+};
+
 export type PluginOptions = {
   dbPath?: string;
   reflection?: unknown;
+  retrieval?: RetrievalOptions;
 };
 
 export const SYSTEM_GUIDANCE = `You have persistent working memory shared with all OpenCode sessions on this machine.
@@ -21,12 +29,40 @@ export const COMPACTION_CONTEXT =
   "(kind=decision), any newly learned facts (kind=fact), and every reusable lesson confirmed this session " +
   "(kind=lesson), so other sessions keep this knowledge.";
 
+export function defaultDataHome(): string {
+  return process.env.XDG_DATA_HOME ?? `${process.env.HOME ?? ""}/.local/share`;
+}
+
 export function defaultDbPath(options?: PluginOptions): string {
   if (typeof options?.dbPath === "string" && options.dbPath.length > 0) {
     return options.dbPath;
   }
-  const dataHome = process.env.XDG_DATA_HOME ?? `${process.env.HOME ?? ""}/.local/share`;
-  return `${dataHome}/opencode-memory/memory.db`;
+  return `${defaultDataHome()}/opencode-memory/memory.db`;
+}
+
+export function defaultTranscriptsDir(options?: PluginOptions): string {
+  const configured = options?.retrieval?.dir;
+  if (typeof configured === "string" && configured.length > 0) {
+    return configured;
+  }
+  return `${defaultDataHome()}/opencode-memory/transcripts`;
+}
+
+export type RetrievalConfig = {
+  enabled: boolean;
+  dir: string;
+  inlineOutputMaxBytes: number;
+};
+
+export function parseRetrievalConfig(options?: PluginOptions): RetrievalConfig {
+  const bytes = options?.retrieval?.inlineOutputMaxBytes;
+  return {
+    enabled: options?.retrieval?.enabled !== false,
+    dir: defaultTranscriptsDir(options),
+    // 128 keeps the truncation marker smaller than the cap for degenerate configs.
+    inlineOutputMaxBytes:
+      typeof bytes === "number" && bytes > 0 ? Math.max(128, bytes) : INLINE_OUTPUT_MAX_BYTES,
+  };
 }
 
 /**
