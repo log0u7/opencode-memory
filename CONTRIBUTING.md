@@ -7,8 +7,8 @@ Thanks for contributing. This document covers the workflow, quality bar, and con
 - `main` is the only branch: protected (PRs required, no force pushes), always deployable, tagged `vX.Y.Z` for releases.
 - Branch from `main`, name it `feat/...`, `fix/...`, or `docs/...` (max three words, hyphenated), open a PR back into `main`.
 - Keep branches short-lived: merge or drop within days, rebase onto `main` when needed.
-- Merge style: `--no-ff`, so every PR lands as exactly one merge commit. That is a team property, not a solo habit: `git log --merges --first-parent main` reads as the list of PRs in merge order (newest merge first), and one merge commit is a single atomic revert unit (`git revert -m 1`). Squash merge is rejected because PR commits here carry meaning (a `fix` and a `feat` in one PR stay separate commits); rebase merge is rejected because it loses the atomic revert. The only cost, one extra commit per PR, is bounded by keeping PRs at five commits or fewer.
-- Rebase onto `main` right before merging, so the merge commit stays a single clean commit.
+- Merge style: squash. One PR becomes exactly one commit on `main`, and that is the team property: `git log --first-parent main` reads as the list of merged changes in order, every commit carries its PR number, every commit is one reviewable diff and one atomic `git revert`, and the history stays linear so bisect always lands on a reviewable state. The fine-grained story (work-in-progress commits, fixups) belongs to the PR page, not to `main`: main records the decisions, not the drafting. The branch ruleset enforces this: `allowed_merge_methods` is `squash` only.
+- Bring the branch up to date with `main` right before merging, so the squash commit is the final reviewed diff.
 - Releases: date-stamp the changelog, bump `package.json`, commit `chore(release): X.Y.Z`, tag `vX.Y.Z` and push: the publish workflow publishes to npm via trusted publishing.
 - Hotfixes are just fixes: branch from `main`, PR, merge, tag a patch release.
 
@@ -27,7 +27,7 @@ A dependency PR merges only when:
 - `@types/node` never exceeds the max Node version actually tested in CI (currently 24).
 - Security patches are always accepted.
 
-Merge flow: review the diff, then `gh pr review --approve` and `gh pr merge --merge`. The branch ruleset requires maintainer approval for bot-authored PRs. Workflow-file bumps can't merge through the gh token (`workflow` scope): either run `gh auth refresh -s workflow` once (interactive), or locally merge with `--no-ff` and push inside a brief ruleset window (disable ruleset, push, re-enable).
+Merge flow: review the diff, then `gh pr review --approve` and `gh pr merge --squash`. The branch ruleset requires maintainer approval for bot-authored PRs. Workflow-file bumps can't merge through the gh token (`workflow` scope): either run `gh auth refresh -s workflow` once (interactive), or locally squash the changes onto `main` and push inside a brief ruleset window (disable ruleset, push, re-enable).
 
 ## Tests are mandatory
 
