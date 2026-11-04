@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-11-04
+
+### Fixed
+
+- `memory_session_search` and `memory_session_read` no longer follow symlinks
+  planted in the transcripts directory: only regular files are read.
+- Tool output cap lowered from 1 MB to 100 KB per call (default still 20000).
+- README note: if the transcript export fails, compaction falls back to the
+  model-written summary silently; the cause is environmental, check disk space
+  and write access on the transcripts directory.
+
 ## [0.6.0] - 2026-11-04
 
 ### Added
