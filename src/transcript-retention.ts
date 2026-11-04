@@ -21,6 +21,8 @@ export type TranscriptCandidate = {
 };
 
 export type SweepOptions = {
+  /** Limit the sweep to one scope (project). Unset sweeps every scope on disk. */
+  scope?: string | undefined;
   /** Epoch ms "now". Defaults to Date.now(). */
   now?: number;
   /** Delete transcripts older than this many days. 0 (default) disables age-based deletion. */
@@ -142,7 +144,10 @@ export function sweepTranscripts(dir: string, options: SweepOptions = {}): Sweep
       : undefined;
   const dryRun = options.dryRun === true;
 
-  const entries = collectTranscripts(dir);
+  let entries = collectTranscripts(dir);
+  if (typeof options.scope === "string" && options.scope.length > 0) {
+    entries = entries.filter((entry) => entry.scope === options.scope);
+  }
 
   // Group by scope, newest first by effective last touch.
   const byScope = new Map<string, TranscriptEntry[]>();

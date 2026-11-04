@@ -519,25 +519,19 @@ export const MemoryV2 = Plugin.define({
           // When sessionIDs provided, treat as targeted: disable age/cap triggers by setting
           // retentionDays 0 and maxSessions 0, but force those specific ids as candidates by
           // a separate path. Simpler: sweep all then filter candidates to the requested ids.
+          const targeted = !!(a.sessionIDs && a.sessionIDs.length > 0);
           const result = sweepTranscripts(retrieval.dir, {
             retentionDays:
               a.retentionDays !== undefined
                 ? a.retentionDays
-                : a.sessionIDs && a.sessionIDs.length > 0
+                : targeted
                   ? 1
                   : retrieval.retentionDays,
             keepRecent:
-              a.keepRecent !== undefined
-                ? a.keepRecent
-                : a.sessionIDs && a.sessionIDs.length > 0
-                  ? 0
-                  : retrieval.keepRecent,
+              a.keepRecent !== undefined ? a.keepRecent : targeted ? 0 : retrieval.keepRecent,
             maxSessions:
-              a.maxSessions !== undefined
-                ? a.maxSessions
-                : a.sessionIDs && a.sessionIDs.length > 0
-                  ? 0
-                  : retrieval.maxSessions,
+              a.maxSessions !== undefined ? a.maxSessions : targeted ? 0 : retrieval.maxSessions,
+            scope: targeted || a.allScopes === true ? undefined : projectScope,
             protectedSessionID: context.sessionID,
             dryRun,
             now: Date.now(),

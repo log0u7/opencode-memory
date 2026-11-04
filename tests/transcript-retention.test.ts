@@ -64,6 +64,35 @@ describe("collectTranscripts", () => {
   it("returns empty for missing dir", () => {
     expect(collectTranscripts(join(tmpdir(), "nope-xyz"))).toEqual([]);
   });
+
+  it("scope filter limits the sweep to one project", () => {
+    const dir = tmpDir();
+    const pA1 = seed(dir, "/project-a", "ses_a1");
+    const pA2 = seed(dir, "/project-a", "ses_a2");
+    const pB1 = seed(dir, "/project-b", "ses_b1");
+    const pB2 = seed(dir, "/project-b", "ses_b2");
+    const old = Date.now() - 60 * 24 * 60 * 60 * 1000;
+    for (const p of [pA1, pA2, pB1, pB2]) {
+      utimesSync(p, old / 1000, old / 1000);
+    }
+    const result = sweepTranscripts(dir, {
+      retentionDays: 30,
+      keepRecent: 1,
+      scope: "/project-a",
+      dryRun: true,
+      now: Date.now(),
+    });
+    expect(result.candidates.every((c) => c.scope === "/project-a")).toBe(true);
+    expect(result.candidates).toHaveLength(1);
+    // project-b untouched in this sweep
+    const global = sweepTranscripts(dir, {
+      retentionDays: 30,
+      keepRecent: 1,
+      dryRun: true,
+      now: Date.now(),
+    });
+    expect(global.candidates.filter((c) => c.scope === "/project-b")).toHaveLength(1);
+  });
 });
 
 describe("sweepTranscripts", () => {

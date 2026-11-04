@@ -1036,6 +1036,37 @@ describe("transcript retention tools", () => {
     await cleanup?.();
   });
 
+  it("memory_transcript_cleanup default scope does not touch other projects", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-rt-"));
+    dirs.push(dir);
+    const tdir = join(dir, "transcripts");
+    const { ctx, added } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: tdir, retentionDays: 1, keepRecent: 1 },
+    });
+    // two scopes
+    mkdirSync(join(tdir, encodeURIComponent("/home/u/project")), { recursive: true });
+    mkdirSync(join(tdir, encodeURIComponent("/other/project")), { recursive: true });
+    const pOwn = join(tdir, encodeURIComponent("/home/u/project"), "ses_old.md");
+    const pOther = join(tdir, encodeURIComponent("/other/project"), "ses_old.md");
+    writeTranscriptFile(pOwn, "# t");
+    writeTranscriptFile(pOther, "# t");
+    const { utimesSync, existsSync } = await import("node:fs");
+    const old = (Date.now() - 60 * 86400000) / 1000;
+    utimesSync(pOwn, old, old);
+    utimesSync(pOther, old, old);
+    // keepRecent needs a newer file per scope
+    writeTranscriptFile(join(tdir, encodeURIComponent("/home/u/project"), "ses_new.md"), "# t");
+    writeTranscriptFile(join(tdir, encodeURIComponent("/other/project"), "ses_new.md"), "# t");
+    const cleanup = await pluginModule.setup(ctx);
+    const tool = added.find((t) => t.name === "memory_transcript_cleanup");
+    const out = await tool?.execute({ apply: true }, { sessionID: "s1" });
+    expect(out?.content).toContain("removed 1");
+    expect(existsSync(pOwn)).toBe(false);
+    // other project's file must remain
+    expect(existsSync(pOther)).toBe(true);
+    await cleanup?.();
+  });
+
   it("memory_transcript_list returns empty when none", async () => {
     const dir = mkdtempSync(join(tmpdir(), "opencode-memory-rt-"));
     dirs.push(dir);
