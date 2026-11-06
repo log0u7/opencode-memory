@@ -3,6 +3,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { Plugin } from "@opencode/plugin";
 
 import { openMemoryDb, type MemoryDb } from "./lib/db.js";
+import { databaseSizeBytes } from "./lib/db.js";
 import {
   TOOL_DESCRIPTIONS,
   createMemoryOps,
@@ -18,7 +19,8 @@ import {
   parseRetrievalConfig,
   type PluginOptions,
 } from "./options.js";
-import { canonicalScope } from "./lib/store.js";
+import { canonicalScope, stats as statsEntries } from "./lib/store.js";
+import { MemoryRpc, snapshotFromStats } from "./rpc.js";
 import {
   compactionSummary,
   handleCompaction,
@@ -704,9 +706,24 @@ export const MemoryV2 = Plugin.define({
       }
     }
 
+    // Live snapshot for the TUI footer: one compact read over the store. Guarded:
+    // after dispose the store is closed, and a late RPC call must not reopen it.
+    const rpc = await ctx.rpc.register(MemoryRpc, {
+      snapshot: async () => {
+        if (disposed) {
+          return { total: 0, store_bytes: 0, top_kinds: [] };
+        }
+        return snapshotFromStats(
+          statsEntries(getDb(), { scope: projectScope }),
+          databaseSizeBytes(getDb()),
+        );
+      },
+    });
+
     const cleanup = async () => {
       disposed = true;
       injected.reset();
+      rpc.dispose();
       db?.close();
       db = null;
     };

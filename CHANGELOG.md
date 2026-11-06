@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-11-06
+
+### Added
+
+- Live memory footer: the TUI part polls a `memory.snapshot` RPC (registered
+  server-side) every 30s and renders the entry count, store size and top kinds
+  in the home footer status. Hidden on v1 hosts and for an empty store.
+
 ## [0.8.1] - 2026-11-06
 
 ### Fixed
