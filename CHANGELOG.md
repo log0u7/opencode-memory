@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-11-06
+
+### Added
+
+- Themed memory footer: bold "Memory" label and muted stats using the active
+  theme's text colors.
+- Event refresh: the footer refreshes immediately (debounced) on server
+  events, with the 30s polling as fallback.
+- `/memory` now opens a dialog with the full kind breakdown (all kinds, not
+  just the top 3) via the new `all_kinds` snapshot field.
+
 ## [0.9.0] - 2026-11-06
 
 ### Added
