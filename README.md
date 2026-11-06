@@ -6,9 +6,49 @@
 [![Node.js](https://img.shields.io/node/v/@log0u7/opencode-memory?logo=node.js&logoColor=white)](https://www.npmjs.com/package/@log0u7/opencode-memory)
 [![npm](https://img.shields.io/npm/v/@log0u7/opencode-memory)](https://www.npmjs.com/package/@log0u7/opencode-memory)
 
-Working memory for [OpenCode](https://opencode.ai): a shared SQLite store that all sessions on a machine read and write, so decisions, facts, and compaction summaries survive session boundaries.
+Working memory for [OpenCode](https://opencode.ai): a shared SQLite store that all sessions on a machine read and write, so decisions, facts, and lessons survive session boundaries. And when compaction hits, the full transcript is exported and a ~120-token pointer replaces the lossy summary: exact recall, zero model tokens.
 
-Every session gets six tools (`memory_save`, `memory_search`, `memory_list`, `memory_forget`, `memory_stats`, `memory_restore`). Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, entries matching every query token first, then prefix matches fill the remaining slots). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
+Every session gets six memory tools (`memory_save`, `memory_search`, `memory_list`, `memory_forget`, `memory_stats`, `memory_restore`) plus transcript search, reading and cleanup when context retrieval is enabled. Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, entries matching every query token first, then prefix matches fill the remaining slots). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
+
+## Why
+
+Two problems every long OpenCode session hits:
+
+1. **Sessions forget.** A decision made on Monday ("use WAL mode") is gone by Wednesday's fresh session, and the agent never thinks to grep old notes.
+2. **Compaction destroys context.** When the context window overflows, OpenCode asks a model to summarise the whole history in one call - measured on a live ~40k-token session: 39,620 input tokens, tens of seconds - and the result is lossy by construction: exact errors, paths and numbers get paraphrased away.
+
+opencode-memory fixes both with one idea: keep the full record, let the agent retrieve what it needs.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant S as Session (40k tokens)
+    participant P as opencode-memory
+    participant D as Transcripts on disk
+    participant M as Summary model
+    rect rgb(255, 235, 235)
+        Note over S,M: Default OpenCode: lossy and expensive
+        S->>M: summarise the whole history
+        M-->>S: lossy summary (39,620 input tokens)
+    end
+    rect rgb(235, 255, 235)
+        Note over S,D: With opencode-memory: lossless and free
+        S->>P: compaction trigger
+        P->>D: export full transcript (mode 0600)
+        P-->>S: ~120-token pointer, no model call
+        S->>D: memory_session_search / memory_session_read
+        D-->>S: exact lines, verbatim
+    end
+```
+
+## Highlights
+
+- **Lossless compaction.** The summary model call is replaced by a pointer: the transcript path, the last user request, and the retrieval rule. Zero model tokens, nothing paraphrased away, no dependency on a prompt cache.
+- **Memory that outlives sessions.** One SQLite store (WAL mode, FTS5 BM25 ranking) shared by every session on the machine, scoped per project worktree plus a `global` scope. Recent entries are injected into the prompt automatically.
+- **The agent writes its own memory.** The system prompt nudges it to save durable decisions, facts, preferences and gotchas as they emerge; distilled lessons (`kind=lesson`) are injected first in later sessions, so known mistakes are not retried.
+- **Exact recall from past sessions.** `memory_session_search` greps exported transcripts for exact lines with context; `memory_session_read` reads a numbered window; `/memory-continue <sessionID>` brings a past session back into the current one.
+- **Optional LLM reflection.** On session idle, one bounded call distils at most `maxLessons` lessons from the transcript tail (~2k input tokens, ~$0.001 with a small model). Off by default.
+- **Safe by default.** Secret-shaped strings are refused at write time; deletes go to a restorable trash; query deletes never cross scopes; tool results are size-capped; everything stays on the machine - no cloud, no API keys.
 
 ## Safety limits
 
@@ -33,7 +73,7 @@ The package is installed automatically at startup into opencode's plugin cache (
 
 ```json
 {
-  "plugin": ["@log0u7/opencode-memory@0.5.1"]
+  "plugin": ["@log0u7/opencode-memory@0.8.1"]
 }
 ```
 
@@ -71,6 +111,30 @@ memory_stats()
 The plugin ships a TUI part (auto-loaded by OpenCode): a toast on load, a `/memory` slash command, and a status slot in the home footer. Slash commands and the memory tools remain the primary interface.
 
 Entry `kind` is free-form; conventions that work well: `decision`, `fact`, `preference`, `gotcha`, `lesson`, `compaction`.
+
+### How it fits together
+
+```mermaid
+flowchart LR
+    subgraph host["One machine"]
+        direction TB
+        subgraph oc["OpenCode"]
+            S1["Session A"]
+            S2["Session B"]
+        end
+        P["opencode-memory plugin"]
+        DB[("memory.db - SQLite + FTS5")]
+        TR["transcripts dir - one append-only file per session"]
+        S1 -- "memory tools" --> P
+        S2 -- "memory tools" --> P
+        P --> DB
+        P -- "export on compaction" --> TR
+        P -. "inject recent entries, bounded" .-> S1
+        P -. "inject retrieval pointer" .-> S2
+    end
+```
+
+One SQLite store (WAL mode, concurrent-safe) holds the entries; the transcripts directory holds the full session records, one append-only file per session. Entries are scoped per project worktree plus a shared `global` scope; all sessions on the machine share the store, and nothing leaves the machine.
 
 ### Feedback loop
 
