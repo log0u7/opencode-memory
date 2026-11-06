@@ -11,6 +11,8 @@ export type MemorySnapshot = {
   store_bytes: number;
   /** Top kinds as pre-rendered "kind: count" strings, count descending, max 3. */
   top_kinds: string[];
+  /** Full kind breakdown, same format, every kind (superset of top_kinds). */
+  all_kinds: string[];
 };
 
 export function snapshotFromStats(
@@ -21,6 +23,7 @@ export function snapshotFromStats(
     total: counts.reduce((sum, row) => sum + row.count, 0),
     store_bytes: storeBytes,
     top_kinds: counts.slice(0, 3).map((row) => `${row.kind}: ${row.count}`),
+    all_kinds: counts.map((row) => `${row.kind}: ${row.count}`),
   };
 }
 
@@ -38,6 +41,15 @@ export function formatMemoryLine(s: MemorySnapshot): string | null {
   return `memory: ${s.total} entries · ${size}${kinds}`;
 }
 
+/** Dialog lines: the header (entries + size) then one line per kind. */
+export function formatMemoryDialog(s: MemorySnapshot): string[] {
+  const size =
+    s.store_bytes >= 1_048_576
+      ? `${(s.store_bytes / 1_048_576).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(s.store_bytes / 1024))} kB`;
+  return [`memory: ${s.total} entries · ${size}`, ...s.all_kinds];
+}
+
 export const MemoryRpc = Rpc.define({
   id: "memory",
   methods: {
@@ -53,8 +65,13 @@ export const MemoryRpc = Rpc.define({
             items: { type: "string" },
             description: "Top kinds as 'kind: count', count descending, max 3",
           },
+          all_kinds: {
+            type: "array",
+            items: { type: "string" },
+            description: "Full kind breakdown as 'kind: count', count descending",
+          },
         },
-        required: ["total", "store_bytes", "top_kinds"],
+        required: ["total", "store_bytes", "top_kinds", "all_kinds"],
         additionalProperties: false,
       },
     },

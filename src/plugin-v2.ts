@@ -711,7 +711,7 @@ export const MemoryV2 = Plugin.define({
     const rpc = await ctx.rpc.register(MemoryRpc, {
       snapshot: async () => {
         if (disposed) {
-          return { total: 0, store_bytes: 0, top_kinds: [] };
+          return { total: 0, store_bytes: 0, top_kinds: [], all_kinds: [] };
         }
         return snapshotFromStats(
           statsEntries(getDb(), { scope: projectScope }),
