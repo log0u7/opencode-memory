@@ -113,6 +113,9 @@ function fakeCtx(
         fn({ add: (definition) => commands.push(definition) }),
     },
     generate: { text: vi.fn(fixtures.generateText ?? (async () => ({ text: "[]" }))) },
+    rpc: {
+      register: async () => ({ dispose: async () => {}, events: { emit: async () => {} } }),
+    },
     event: {
       subscribe: vi.fn(
         fixtures.subscribe ??
