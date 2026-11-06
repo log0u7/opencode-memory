@@ -1,6 +1,6 @@
 {
   "name": "@log0u7/opencode-memory",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Working memory for OpenCode: shared SQLite store with hybrid search, shared across all sessions on a machine.",
   "type": "module",
   "license": "Apache-2.0",
@@ -29,10 +29,19 @@
     "tui"
   ],
   "peerDependencies": {
-    "@opencode-ai/plugin": ">=2.0.0",
+    "@opencode-ai/plugin": "^1.18.32",
+    "@opencode/plugin": "^2.0.26",
     "@opentui/core": ">=0.5.0",
     "@opentui/solid": ">=0.5.0",
     "solid-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    },
+    "@opencode/plugin": {
+      "optional": true
+    }
   },
   "files": [
     "dist",
