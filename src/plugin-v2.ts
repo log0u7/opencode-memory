@@ -10,6 +10,7 @@ import {
   memoryInventory,
   oncePerSession,
 } from "./lib/memory-ops.js";
+import { currentCommitHash } from "./lib/git.js";
 import { createReflection, parseReflectionConfig } from "./lib/reflection.js";
 import {
   SYSTEM_GUIDANCE,
@@ -205,6 +206,12 @@ export const MemoryV2 = Plugin.define({
             scope: { type: "string", description: "Scope key; defaults to the project directory" },
             tags: { type: "array", items: { type: "string" }, description: "Optional tags" },
             expires_at: { type: "number", description: "Optional epoch ms expiry" },
+            paths: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Files the entry documents (relative project paths): the entry is stale when any of them changes",
+            },
           },
           required: ["kind", "title", "body"],
           additionalProperties: false,
@@ -217,10 +224,15 @@ export const MemoryV2 = Plugin.define({
             scope?: string;
             tags?: string[];
             expires_at?: number;
+            paths?: string[];
           };
           return {
             content: ops.save(
-              a,
+              {
+                ...a,
+                // Auto-anchor: the entry is written against the current HEAD.
+                commit_sha: currentCommitHash(ctx.location.directory),
+              },
               defaultScope(undefined, a.scope ?? ctx.location.directory),
               context.agent,
             ),
@@ -609,14 +621,14 @@ export const MemoryV2 = Plugin.define({
     });
 
     // The v1 system transform maps to the v2 context hook: guidance first, then the
-    // once-per-session inventory.
+    // once-per-session inventory (stale anchored entries filtered out).
     await ctx.session.hook("context", (event) => {
       event.system.push(textPart(SYSTEM_GUIDANCE));
       if (disposed) {
         return;
       }
       const inventory = injected.inject(event.sessionID, () =>
-        memoryInventory(getDb, dbPath, projectScope),
+        memoryInventory(getDb, dbPath, projectScope, { directory: ctx.location.directory }),
       );
       if (inventory !== null) {
         event.system.push(textPart(inventory));
@@ -631,7 +643,9 @@ export const MemoryV2 = Plugin.define({
       if (disposed) {
         return;
       }
-      const inventory = memoryInventory(getDb, dbPath, projectScope);
+      const inventory = memoryInventory(getDb, dbPath, projectScope, {
+        directory: ctx.location.directory,
+      });
       if (inventory !== null) {
         event.system.push(textPart(inventory));
       }

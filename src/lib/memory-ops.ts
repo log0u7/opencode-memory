@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 
 import { databaseSizeBytes, type MemoryDb } from "./db.js";
+import { isEntryFresh } from "./git.js";
 import {
   forget,
   list,
@@ -23,6 +24,12 @@ export type SaveArgs = {
   tags?: string[] | undefined;
   expires_at?: number | null | undefined;
   source?: string | undefined;
+  /** Files the entry documents (relative project paths): the entry is stale
+   * when any of them changes after the save commit. */
+  paths?: string[] | undefined;
+  /** Repository commit the entry was written against (auto-resolved by the
+   * plugin from the project directory). */
+  commit_sha?: string | undefined;
 };
 export type SearchArgs = { query: string; limit?: number | undefined };
 export type ListArgs = { limit?: number | undefined };
@@ -52,6 +59,8 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
           tags: args.tags ?? [],
           expires_at: args.expires_at ?? null,
           ...(source !== undefined ? { source } : {}),
+          ...(args.paths !== undefined ? { paths: args.paths } : {}),
+          ...(args.commit_sha !== undefined ? { commit_sha: args.commit_sha } : {}),
         });
         return `saved ${entry.id} (${entry.scope}, ${created ? "created" : "updated"})`;
       }),
@@ -187,6 +196,7 @@ export function memoryInventory(
   getDb: () => MemoryDb,
   dbPath: string,
   scope: string,
+  options: { directory?: string } = {},
 ): string | null {
   if (!existsSync(dbPath)) {
     return null;
@@ -201,9 +211,18 @@ export function memoryInventory(
   const seen = new Set(lessons.map((entry) => entry.id));
   const ordered = [...lessons, ...others.filter((entry) => !seen.has(entry.id))];
 
+  // Anchored entries whose files changed since the save are stale: nothing
+  // observable contradicts an unanchored entry, so only those are filtered.
+  const directory = options.directory;
+  const fresh =
+    directory === undefined ? ordered : ordered.filter((entry) => isEntryFresh(entry, directory));
+  if (fresh.length === 0) {
+    return null;
+  }
+
   const lines = [INVENTORY_HEADER];
   let size = INVENTORY_HEADER.length;
-  for (const entry of ordered) {
+  for (const entry of fresh) {
     const by = entry.source === undefined ? "" : `, by ${entry.source}`;
     const line = `- [${entry.kind}] ${entry.title} (updated ${dayOf(entry.updated_at)}${by})`;
     if (size + line.length + 1 > INVENTORY_MAX_CHARS) {

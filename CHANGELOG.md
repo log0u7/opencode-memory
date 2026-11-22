@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-11-22
+
+### Added
+
+- **Code anchoring**: a memory entry can be anchored to the files it documents
+  and the commit it was written against. `memory_save` gains `paths`
+  (relative project paths, validated: max 20, no absolute, no `..`) and the
+  plugin auto-resolves the current HEAD commit at save time
+  (`commit_sha`).
+- **Staleness**: an anchored entry is stale when any of its paths changed
+  since the anchored commit, is untracked, or is missing (documenting a
+  deleted file). Stale entries are filtered OUT of the session inventory
+  injection — a decision true on Monday stops being asserted after a refactor
+  broke its files. `memory_search` / `memory_list` keep showing them (with
+  the store untouched); only the automatic context injection stops claiming
+  them. Inspired by workflow-guard's project-memory.
+- New tool arg on `memory_save`: `paths`.
+
+### Notes
+
+- Freshness checks are synchronous `git diff`/`ls-files` calls, bounded at
+  2 s each, on the first inventory of a session — the same pattern
+  workflow-guard ships.
+- Schema: `entries.paths` / `entries.commit_sha`, backfilled on open
+  (existing stores keep working).
+
 ## [0.10.0] - 2026-11-06
 
 ### Added

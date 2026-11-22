@@ -8,6 +8,7 @@ import {
   memoryInventory,
   oncePerSession,
 } from "./lib/memory-ops.js";
+import { currentCommitHash } from "./lib/git.js";
 import {
   parseReflectionConfig,
   type ReflectionConfig,
@@ -120,6 +121,7 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
   const projectScope = defaultScope(input.worktree, input.directory);
   const injected = oncePerSession();
   const reflection = parseReflectionConfig(options?.reflection);
+  const inventoryDir = input.directory ?? input.worktree ?? process.cwd();
 
   const hooks: Hooks = {
     tool: {
@@ -137,10 +139,19 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
             .describe("Scope key; defaults to this session's worktree"),
           tags: tool.schema.array(tool.schema.string()).optional().describe("Optional tags"),
           expires_at: tool.schema.number().optional().describe("Optional epoch ms expiry"),
+          paths: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe(
+              "Files the entry documents (relative project paths): the entry is stale when any of them changes",
+            ),
         },
         execute: async (args, context) =>
           ops.save(
-            args,
+            {
+              ...args,
+              commit_sha: currentCommitHash(context.directory ?? context.worktree ?? process.cwd()),
+            },
             defaultScope(args.scope ?? context.worktree ?? context.directory),
             context.agent,
           ),
@@ -231,7 +242,7 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
         return;
       }
       const inventory = injected.inject(input.sessionID, () =>
-        memoryInventory(getDb, dbPath, projectScope),
+        memoryInventory(getDb, dbPath, projectScope, { directory: inventoryDir }),
       );
       if (inventory !== null) {
         output.system.push(inventory);
@@ -242,7 +253,7 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
       if (disposed) {
         return;
       }
-      const inventory = memoryInventory(getDb, dbPath, projectScope);
+      const inventory = memoryInventory(getDb, dbPath, projectScope, { directory: inventoryDir });
       if (inventory !== null) {
         output.context.push(inventory);
       }

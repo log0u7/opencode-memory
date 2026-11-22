@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isAbsolute } from "node:path";
 
 import type { MemoryDb } from "./db.js";
 import type { Entry, EntryInput } from "../types/entry.js";
@@ -85,6 +86,27 @@ function validateEntry(input: EntryInput): void {
   if (input.tags.some((tag) => tag.length > TAG_MAX)) {
     throw new TypeError(`each tag must be at most ${TAG_MAX} characters`);
   }
+  if (input.paths !== undefined) {
+    if (input.paths.length > 20) {
+      throw new TypeError("at most 20 paths allowed");
+    }
+    for (const path of input.paths) {
+      if (
+        path.length === 0 ||
+        path.length > 500 ||
+        isAbsolute(path) ||
+        path.split(/[\\/]/).includes("..") ||
+        /[\0\r\n]/.test(path)
+      ) {
+        throw new TypeError(
+          "paths must be relative project paths (no '.. ', no absolute, max 500 chars)",
+        );
+      }
+    }
+  }
+  if (input.commit_sha !== undefined && !/^[0-9a-f]{7,64}$/i.test(input.commit_sha)) {
+    throw new TypeError("commit_sha must be a git sha (7..64 hex)");
+  }
   if (SECRET_PATTERNS.some((pattern) => looksLikeSecret(input, pattern))) {
     throw new SecretDetectedError();
   }
@@ -169,7 +191,7 @@ export function saveEntry(
 
   if (existing) {
     db.conn.run(
-      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ?, source = ? WHERE id = ?",
+      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ?, source = ?, paths = ?, commit_sha = ? WHERE id = ?",
       [
         input.kind,
         input.body,
@@ -177,6 +199,8 @@ export function saveEntry(
         now,
         input.expires_at ?? null,
         input.source ?? null,
+        JSON.stringify(input.paths ?? []),
+        input.commit_sha ?? null,
         existing.id,
       ],
     );
@@ -192,6 +216,8 @@ export function saveEntry(
         updated_at: now,
         expires_at: input.expires_at,
         ...(input.source !== undefined ? { source: input.source } : {}),
+        ...(input.paths !== undefined ? { paths: input.paths } : {}),
+        ...(input.commit_sha !== undefined ? { commit_sha: input.commit_sha } : {}),
       },
       created: false,
     };
@@ -199,7 +225,7 @@ export function saveEntry(
 
   const id = randomUUID();
   db.conn.run(
-    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       id,
       scope,
@@ -211,6 +237,8 @@ export function saveEntry(
       now,
       input.expires_at,
       input.source ?? null,
+      JSON.stringify(input.paths ?? []),
+      input.commit_sha ?? null,
     ],
   );
 
@@ -226,6 +254,8 @@ export function saveEntry(
       updated_at: now,
       expires_at: input.expires_at,
       ...(input.source !== undefined ? { source: input.source } : {}),
+      ...(input.paths !== undefined ? { paths: input.paths } : {}),
+      ...(input.commit_sha !== undefined ? { commit_sha: input.commit_sha } : {}),
     },
     created: true,
   };
@@ -406,6 +436,12 @@ function rowToEntry(row: Row): Entry {
     updated_at: row.updated_at,
     expires_at: row.expires_at,
     ...(row.source !== null ? { source: row.source } : {}),
+    ...(row.paths !== null && row.paths !== undefined
+      ? { paths: JSON.parse(String(row.paths)) as string[] }
+      : {}),
+    ...(row.commit_sha !== null && row.commit_sha !== undefined
+      ? { commit_sha: String(row.commit_sha) }
+      : {}),
   };
 }
 
