@@ -12,6 +12,7 @@ import {
   search,
   SecretDetectedError,
   stats,
+  suggestReplacements,
 } from "./store.js";
 import type { Entry } from "../types/entry.js";
 
@@ -30,6 +31,9 @@ export type SaveArgs = {
   /** Repository commit the entry was written against (auto-resolved by the
    * plugin from the project directory). */
   commit_sha?: string | undefined;
+  /** Id of the entry this one replaces: the old row is kept as a superseded
+   * tombstone instead of stacking a near-duplicate. */
+  supersedes?: string | undefined;
 };
 export type SearchArgs = { query: string; limit?: number | undefined };
 export type ListArgs = { limit?: number | undefined };
@@ -51,7 +55,7 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
   return {
     save: (args, scope, source) =>
       run(() => {
-        const { entry, created } = saveEntry(getDb(), {
+        const { entry, created, superseded } = saveEntry(getDb(), {
           scope,
           kind: args.kind,
           title: args.title,
@@ -61,8 +65,32 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
           ...(source !== undefined ? { source } : {}),
           ...(args.paths !== undefined ? { paths: args.paths } : {}),
           ...(args.commit_sha !== undefined ? { commit_sha: args.commit_sha } : {}),
+          ...(args.supersedes !== undefined ? { supersedes: args.supersedes } : {}),
         });
-        return `saved ${entry.id} (${entry.scope}, ${created ? "created" : "updated"})`;
+        let text = `saved ${entry.id} (${entry.scope}, ${created ? "created" : "updated"})`;
+        if (superseded !== undefined) {
+          text += `; replaced ${superseded}`;
+        } else if (args.supersedes === undefined) {
+          // The store stays pure: without an explicit supersedes the answer only names
+          // the current entries worth replacing, and the agent decides.
+          const similar = suggestReplacements(
+            getDb(),
+            {
+              scope: entry.scope,
+              kind: entry.kind,
+              title: entry.title,
+              excludeId: entry.id,
+            },
+            SIMILAR_REPORT_MAX,
+          );
+          if (similar.length > 0) {
+            const listed = similar
+              .map((candidate) => `${candidate.id} (${JSON.stringify(candidate.title)})`)
+              .join(", ");
+            text += `\nsimilar entries: ${listed} - use supersedes=${similar[0]?.id} to replace`;
+          }
+        }
+        return text;
       }),
     search: (args, scope) =>
       run(() => {
@@ -126,6 +154,10 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
  * broad query delete stays a bounded tool result. */
 const REMOVED_REPORT_MAX = 10;
 
+/** How many similar entries a save without `supersedes` may name as replacement
+ * candidates, so the hint stays a one-line nudge instead of a search result. */
+const SIMILAR_REPORT_MAX = 2;
+
 function renderRemoved(entries: Entry[]): string {
   const listed = entries
     .slice(0, REMOVED_REPORT_MAX)
@@ -146,7 +178,7 @@ const INVENTORY_HEADER = "Memory already stored for this project (lessons first,
 
 /** Tool descriptions shared by both entry points so the two hosts cannot drift. */
 export const TOOL_DESCRIPTIONS = {
-  save: "Save a durable entry to shared working memory (decisions, facts, preferences, gotchas, lessons). Never store credentials.",
+  save: "Save a durable entry to shared working memory (decisions, facts, preferences, gotchas, lessons). Never store credentials. Pass supersedes=<id> to replace a known entry instead of stacking a near-duplicate; without it, the result lists similar entries worth replacing.",
   search:
     "Search shared working memory (all sessions on this machine). Results include this project's scope and global entries: entries matching every query token come first, then entries matching some token as a prefix fill the remaining slots.",
   list: "List recent memory entries for a scope (default: this project), newest first.",

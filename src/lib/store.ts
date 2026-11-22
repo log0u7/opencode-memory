@@ -159,8 +159,9 @@ function changesOf(db: MemoryDb): number {
 }
 
 /** Whether a save inserted a row or rewrote the one already holding that scope and
- * title, so a caller can tell the model what actually happened. */
-export type SaveResult = { entry: Entry; created: boolean };
+ * title, so a caller can tell the model what actually happened. `superseded` names the
+ * entry the save replaced through an explicit `supersedes`. */
+export type SaveResult = { entry: Entry; created: boolean; superseded?: string };
 
 export function save(db: MemoryDb, input: EntryInput, options: { now?: number } = {}): Entry {
   return saveEntry(db, input, options).entry;
@@ -178,16 +179,43 @@ export function saveEntry(
   // Expired rows are dead weight in search, so drop them with the save.
   sweep(db, { now });
 
+  // An explicit supersedes replaces one named entry: the old row stays as a superseded
+  // tombstone and the save inserts a fresh current row carrying the link. The target
+  // must exist, be live and belong to the save's scope, or the link is a mistake the
+  // caller hears about instead of a silent cross-project rewrite.
+  // ponytail: the read-then-update-then-insert is not transactional, so two concurrent
+  // saves naming the same target can both claim it. Ceiling is a double tombstone, not
+  // data loss. Upgrade path: BEGIN IMMEDIATE around the whole save.
+  let supersededId: string | undefined;
+  if (input.supersedes !== undefined) {
+    const target = db.conn.get<{ id: string }>(
+      `SELECT id FROM entries WHERE id = ? AND scope = ? AND ${LIVE}`,
+      [input.supersedes, scope],
+    );
+    if (target === null) {
+      throw new TypeError("supersedes must name a live entry of the same scope");
+    }
+    db.conn.run("UPDATE entries SET status = 'superseded', superseded_at = ? WHERE id = ?", [
+      now,
+      target.id,
+    ]);
+    supersededId = target.id;
+  }
+
   // A repeated title in the same scope is the same knowledge: rewrite it instead of
-  // stacking duplicates.
+  // stacking duplicates. Superseding skips the rewrite on purpose: the named entry is
+  // tombstoned and a fresh row takes over, even when the titles coincide.
   // ponytail: SQLite lower() folds ASCII only, so a non-ASCII title re-saved in a
   // different case is not deduped; and the read-then-write is not transactional, so two
   // concurrent saves of the same title can both insert. Ceiling is a rare duplicate, not
   // data loss. Upgrade path: a normalized key column plus BEGIN IMMEDIATE.
-  const existing = db.conn.get<{ id: string; created_at: number }>(
-    `SELECT id, created_at FROM entries WHERE scope = ? AND lower(trim(title)) = ? AND ${LIVE}`,
-    [scope, input.title.trim().toLowerCase()],
-  );
+  const existing =
+    input.supersedes === undefined
+      ? db.conn.get<{ id: string; created_at: number }>(
+          `SELECT id, created_at FROM entries WHERE scope = ? AND lower(trim(title)) = ? AND status = 'current' AND ${LIVE}`,
+          [scope, input.title.trim().toLowerCase()],
+        )
+      : null;
 
   if (existing) {
     db.conn.run(
@@ -218,6 +246,7 @@ export function saveEntry(
         ...(input.source !== undefined ? { source: input.source } : {}),
         ...(input.paths !== undefined ? { paths: input.paths } : {}),
         ...(input.commit_sha !== undefined ? { commit_sha: input.commit_sha } : {}),
+        status: "current",
       },
       created: false,
     };
@@ -225,7 +254,7 @@ export function saveEntry(
 
   const id = randomUUID();
   db.conn.run(
-    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, supersedes, status, superseded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       id,
       scope,
@@ -239,6 +268,9 @@ export function saveEntry(
       input.source ?? null,
       JSON.stringify(input.paths ?? []),
       input.commit_sha ?? null,
+      input.supersedes ?? null,
+      "current",
+      null,
     ],
   );
 
@@ -256,9 +288,75 @@ export function saveEntry(
       ...(input.source !== undefined ? { source: input.source } : {}),
       ...(input.paths !== undefined ? { paths: input.paths } : {}),
       ...(input.commit_sha !== undefined ? { commit_sha: input.commit_sha } : {}),
+      ...(input.supersedes !== undefined ? { supersedes: input.supersedes } : {}),
+      status: "current",
     },
     created: true,
+    ...(supersededId !== undefined ? { superseded: supersededId } : {}),
   };
+}
+
+/**
+ * Candidates an explicit `supersedes` could replace, for saves that do not name one:
+ * FTS over the title tokens (strict matches first, prefix matches fill the rest), same
+ * kind, same scope, current rows only, minus the row the title rewrite already handles.
+ * The store never replaces on its own: the list only arms the caller's report.
+ *
+ * ponytail: the ranked FTS pass scores every match, so a very broad prefix on a huge
+ * store pays per match; the rowid fetch and the JS filters keep the per-save cost flat
+ * at hundreds of entries. Upgrade path: window the FTS scan when stores grow past that.
+ */
+export function suggestReplacements(
+  db: MemoryDb,
+  query: { scope: string; kind: string; title: string; excludeId?: string },
+  limit = 3,
+): Entry[] {
+  const scope = canonicalScope(query.scope);
+  const cap = clampLimit(limit, 3);
+  const title = query.title.trim().toLowerCase();
+
+  // Two indexed steps instead of one filtered join: SQLite drives a filtered join from
+  // the entries side and re-runs the MATCH once per row, which turns every suggestion
+  // into a scan of the scope. Rank inside FTS (indexed), filter in JS: both stay flat.
+  const hits: Entry[] = [];
+  const seen = new Set<string>();
+  for (const match of searchCandidates(query.title)) {
+    const ranked = db.conn.all<{ rowid: number }>(
+      "SELECT rowid FROM entries_fts WHERE entries_fts MATCH ? ORDER BY rank LIMIT ?",
+      [match, MAX_LIMIT],
+    );
+    if (ranked.length === 0) {
+      continue;
+    }
+    const ids = ranked.map((row) => row.rowid);
+    const rows = db.conn.all<Row & { rid: number }>(
+      `SELECT rowid AS rid, * FROM entries WHERE rowid IN (${ids.map(() => "?").join(", ")})`,
+      ids,
+    );
+    const byRowid = new Map(rows.map((row) => [row.rid, row]));
+    for (const { rowid } of ranked) {
+      const row = byRowid.get(rowid);
+      if (
+        row === undefined ||
+        row.kind !== query.kind ||
+        row.scope !== scope ||
+        row.status !== "current" ||
+        row.deleted_at !== null ||
+        row.title.trim().toLowerCase() === title ||
+        (query.excludeId !== undefined && row.id === query.excludeId)
+      ) {
+        continue;
+      }
+      if (!seen.has(row.id)) {
+        seen.add(row.id);
+        hits.push(rowToEntry(row));
+      }
+      if (hits.length >= cap) {
+        return hits;
+      }
+    }
+  }
+  return hits;
 }
 
 /**
@@ -299,7 +397,7 @@ function ftsHits(db: MemoryDb, match: string, scope: string, now: number, limit:
     .all<Row>(
       `SELECT e.* FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid
        WHERE entries_fts MATCH ? AND (e.scope = ? OR e.scope = 'global')
-         AND (e.expires_at IS NULL OR e.expires_at > ?) AND e.${LIVE}
+         AND (e.expires_at IS NULL OR e.expires_at > ?) AND e.status = 'current' AND e.${LIVE}
        ORDER BY bm25(entries_fts) ASC, e.updated_at DESC
        LIMIT ?`,
       [match, scope, now, limit],
@@ -321,7 +419,7 @@ export function list(
     .all<Row>(
       `SELECT * FROM entries
        WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?) ${kindFilter}
-         AND ${LIVE}
+         AND status = 'current' AND ${LIVE}
        ORDER BY updated_at DESC, id ASC
        LIMIT ?`,
       [scope, now, ...kindArgs, limit],
@@ -389,15 +487,32 @@ export function forget(db: MemoryDb, target: ForgetTarget): Entry[] {
 }
 
 /** Puts a trashed entry back into every read. Machine-wide by id, mirroring the delete it
- * undoes; `null` when the id is not in the trash. */
+ * undoes; `null` when the id is not in the trash. A superseded entry is restorable too:
+ * it comes back as `current` and its replacement steps down to `superseded`, so the two
+ * states stay coherent. */
 export function restore(db: MemoryDb, target: { id: string }): Entry | null {
-  const row = db.conn.get<Row>(`SELECT * FROM entries WHERE id = ? AND deleted_at IS NOT NULL`, [
-    target.id,
-  ]);
+  const row = db.conn.get<Row>(
+    `SELECT * FROM entries WHERE id = ? AND (deleted_at IS NOT NULL OR status = 'superseded')`,
+    [target.id],
+  );
   if (row === null) {
     return null;
   }
-  db.conn.run("UPDATE entries SET deleted_at = NULL WHERE id = ?", [target.id]);
+  const now = Date.now();
+  if (row.deleted_at !== null) {
+    db.conn.run("UPDATE entries SET deleted_at = NULL WHERE id = ?", [target.id]);
+  }
+  if (row.status === "superseded") {
+    db.conn.run("UPDATE entries SET status = 'current', superseded_at = NULL WHERE id = ?", [
+      target.id,
+    ]);
+    // Every current row that claims this one is its replacement loses the crown; a
+    // single statement keeps the rare two-claimants case coherent too.
+    db.conn.run(
+      `UPDATE entries SET status = 'superseded', superseded_at = ? WHERE supersedes = ? AND status = 'current' AND ${LIVE}`,
+      [now, target.id],
+    );
+  }
   return rowToEntry(row);
 }
 
@@ -441,6 +556,13 @@ function rowToEntry(row: Row): Entry {
       : {}),
     ...(row.commit_sha !== null && row.commit_sha !== undefined
       ? { commit_sha: String(row.commit_sha) }
+      : {}),
+    ...(row.supersedes !== null && row.supersedes !== undefined
+      ? { supersedes: row.supersedes }
+      : {}),
+    ...(row.status !== null && row.status !== undefined ? { status: row.status } : {}),
+    ...(row.superseded_at !== null && row.superseded_at !== undefined
+      ? { superseded_at: row.superseded_at }
       : {}),
   };
 }

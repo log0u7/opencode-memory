@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-11-22
+
+### Added
+
+- **Supersede**: `memory_save` gains `supersedes` (entry id) to replace an entry
+  instead of stacking a near-duplicate. The named entry must be live and in
+  the same scope; it is kept as a `superseded` tombstone (hidden from
+  `memory_list`, `memory_search` and the inventory) while the fresh entry
+  carries the link, and the save result reports `; replaced <old-id>`.
+- Without `supersedes`, the save result names up to two similar current
+  entries of the same kind and scope (`similar entries: <id> ("<title>") - use
+  supersedes=<id> to replace`). The store never replaces on its own: the
+  answer only arms the agent.
+- `memory_restore` on a superseded entry brings it back as `current` and
+  marks its replacement `superseded`, so the pair stays coherent.
+
+### Notes
+
+- Inspired by workflow-guard's supersedes pattern.
+
 ## [0.11.0] - 2026-11-22
 
 ### Added

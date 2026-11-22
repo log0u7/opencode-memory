@@ -19,6 +19,15 @@ export type Entry = {
   paths?: string[];
   /** The repository commit the entry was written against (auto-resolved at save). */
   commit_sha?: string;
+  /** Id of the entry this one replaces. The replaced row stays as a superseded
+   * tombstone, hidden from every read, restorable through memory_restore. */
+  supersedes?: string;
+  /** Lifecycle of the row: `current` entries are the live knowledge, a `superseded`
+   * row was replaced by the entry whose supersedes points at it. Unset on rows
+   * written before the column existed. */
+  status?: "current" | "superseded";
+  /** When the row was superseded (epoch ms). */
+  superseded_at?: number;
 };
 
 export type EntryInput = {
@@ -31,4 +40,8 @@ export type EntryInput = {
   source?: string;
   paths?: string[];
   commit_sha?: string;
+  /** The entry this one replaces (saveEntry validates and marks the old row). */
+  supersedes?: string;
+  /** Reserved: saveEntry manages the lifecycle itself. */
+  status?: "current" | "superseded";
 };

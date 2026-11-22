@@ -212,6 +212,10 @@ export const MemoryV2 = Plugin.define({
               description:
                 "Files the entry documents (relative project paths): the entry is stale when any of them changes",
             },
+            supersedes: {
+              type: "string",
+              description: "Id of the entry this one replaces",
+            },
           },
           required: ["kind", "title", "body"],
           additionalProperties: false,
@@ -225,6 +229,7 @@ export const MemoryV2 = Plugin.define({
             tags?: string[];
             expires_at?: number;
             paths?: string[];
+            supersedes?: string;
           };
           return {
             content: ops.save(

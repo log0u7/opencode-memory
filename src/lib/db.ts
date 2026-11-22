@@ -41,7 +41,15 @@ CREATE INDEX IF NOT EXISTS entries_scope_title ON entries(scope, lower(trim(titl
 
 /** Columns added after the first release. `CREATE TABLE IF NOT EXISTS` never adds a column
  * to an existing database, so each one is backfilled on open. */
-const ADDED_COLUMNS = ["source TEXT", "deleted_at INTEGER", "paths TEXT", "commit_sha TEXT"];
+const ADDED_COLUMNS = [
+  "source TEXT",
+  "deleted_at INTEGER",
+  "paths TEXT",
+  "commit_sha TEXT",
+  "supersedes TEXT",
+  "status TEXT NOT NULL DEFAULT 'current'",
+  "superseded_at INTEGER",
+];
 
 // SECURITY.md promises restrictive permissions whatever the user's umask is, so the
 // directory and files are mode-enforced explicitly instead of left to the umask.
