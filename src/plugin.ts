@@ -145,6 +145,7 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
             .describe(
               "Files the entry documents (relative project paths): the entry is stale when any of them changes",
             ),
+          supersedes: tool.schema.string().optional().describe("Id of the entry this one replaces"),
         },
         execute: async (args, context) =>
           ops.save(
