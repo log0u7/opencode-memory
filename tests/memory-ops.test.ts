@@ -28,7 +28,7 @@ function store() {
 }
 
 describe("memory ops", () => {
-  it("counts entries by kind for the scope plus global, ignoring expired ones", () => {
+  it("counts entries by kind for the scope plus global, ignoring expired ones", async () => {
     const { ops, getDb, close } = store();
     ops.save({ kind: "lesson", title: "lesson one", body: "x" }, "/w");
     ops.save({ kind: "lesson", title: "lesson two", body: "x" }, "/other");
@@ -46,13 +46,13 @@ describe("memory ops", () => {
     close();
   });
 
-  it("reports an empty store readably in stats", () => {
+  it("reports an empty store readably in stats", async () => {
     const { ops, close } = store();
     expect(ops.stats("/w")).toBe("no memory entries");
     close();
   });
 
-  it("restores a trashed entry by id", () => {
+  it("restores a trashed entry by id", async () => {
     const { ops, close } = store();
     const saved = ops.save({ kind: "fact", title: "trash me", body: "x" }, "/w");
     const id = saved.split(" ")[1] ?? "";
@@ -65,16 +65,16 @@ describe("memory ops", () => {
     close();
   });
 
-  it("records who wrote an entry and names the writer in the inventory", () => {
+  it("records who wrote an entry and names the writer in the inventory", async () => {
     const { ops, dbPath, getDb, close } = store();
     ops.save({ kind: "lesson", title: "check the schema first", body: "x" }, "/w", "reflection");
 
     expect(JSON.parse(ops.list({}, "/w"))[0].source).toBe("reflection");
-    expect(memoryInventory(getDb, dbPath, "/w")).toContain("by reflection");
+    expect(await memoryInventory(getDb, dbPath, "/w")).toContain("by reflection");
     close();
   });
 
-  it("says whether a save created an entry or rewrote one", () => {
+  it("says whether a save created an entry or rewrote one", async () => {
     const { ops, close } = store();
 
     const created = ops.save(
@@ -92,7 +92,7 @@ describe("memory ops", () => {
     close();
   });
 
-  it("lists what a query delete removed instead of only counting it", () => {
+  it("lists what a query delete removed instead of only counting it", async () => {
     const { ops, close } = store();
     ops.save({ kind: "fact", title: "postgres sharding", body: "x" }, "/w");
     ops.save({ kind: "fact", title: "postgres replica", body: "x" }, "/w");
@@ -108,7 +108,7 @@ describe("memory ops", () => {
     close();
   });
 
-  it("caps the delete report so a broad query cannot flood the context", () => {
+  it("caps the delete report so a broad query cannot flood the context", async () => {
     const { ops, close } = store();
     for (let i = 0; i < 12; i++) {
       ops.save({ kind: "fact", title: `postgres note ${i}`, body: "x" }, "/w");
@@ -122,7 +122,7 @@ describe("memory ops", () => {
     close();
   });
 
-  it("reports the store size and the oldest entry in stats", () => {
+  it("reports the store size and the oldest entry in stats", async () => {
     const { ops, close } = store();
     ops.save({ kind: "fact", title: "old note", body: "x" }, "/w");
     ops.save({ kind: "fact", title: "new note", body: "x" }, "/w");
@@ -139,7 +139,7 @@ describe("memory ops", () => {
     close();
   });
 
-  it("returns the same model-facing text for every operation", () => {
+  it("returns the same model-facing text for every operation", async () => {
     const { ops, close } = store();
 
     expect(
@@ -154,7 +154,7 @@ describe("memory ops", () => {
     close();
   });
 
-  it("reports read results and usage without throwing", () => {
+  it("reports read results and usage without throwing", async () => {
     const { ops, close } = store();
 
     expect(ops.search({ query: "nothing" }, "/w")).toBe("no matching memory entries");
@@ -163,7 +163,7 @@ describe("memory ops", () => {
     close();
   });
 
-  it("maps a secret refusal to guidance instead of throwing", () => {
+  it("maps a secret refusal to guidance instead of throwing", async () => {
     const { ops, close } = store();
 
     expect(
@@ -176,7 +176,7 @@ describe("memory ops", () => {
     close();
   });
 
-  it("keeps the search and list limits capped", () => {
+  it("keeps the search and list limits capped", async () => {
     const { ops, close } = store();
     for (let i = 0; i < 60; i++) {
       ops.save({ kind: "fact", title: `postgres note ${i}`, body: "x" }, "/w");
@@ -187,7 +187,7 @@ describe("memory ops", () => {
     close();
   });
 
-  it("stores in the scope it is given and never crosses scopes when forgetting", () => {
+  it("stores in the scope it is given and never crosses scopes when forgetting", async () => {
     const { ops, getDb, close } = store();
     ops.save({ kind: "fact", title: "postgres sharding", body: "uses postgres" }, "/w");
     ops.save({ kind: "fact", title: "postgres replica", body: "uses postgres" }, "/other");
@@ -201,48 +201,48 @@ describe("memory ops", () => {
 });
 
 describe("memory inventory", () => {
-  it("returns null when the store does not exist yet, and creates nothing", () => {
+  it("returns null when the store does not exist yet, and creates nothing", async () => {
     const { ops, dbPath, getDb, close } = store();
 
-    expect(memoryInventory(getDb, dbPath, "/w")).toBeNull();
+    expect(await memoryInventory(getDb, dbPath, "/w")).toBeNull();
     expect(dbPath).toBeDefined();
     expect(ops.save({ kind: "fact", title: "seed", body: "x" }, "/w")).toMatch(/^saved/);
     close();
   });
 
-  it("returns null when the scope has no entries", () => {
+  it("returns null when the scope has no entries", async () => {
     const { ops, dbPath, getDb, close } = store();
     ops.save({ kind: "fact", title: "seed", body: "x" }, "/w");
 
-    expect(memoryInventory(getDb, dbPath, "/other")).toBeNull();
-    expect(memoryInventory(getDb, dbPath, "/w")).toContain("seed");
+    expect(await memoryInventory(getDb, dbPath, "/other")).toBeNull();
+    expect(await memoryInventory(getDb, dbPath, "/w")).toContain("seed");
     close();
   });
 
-  it("lists titles, kinds and dates without bodies", () => {
+  it("lists titles, kinds and dates without bodies", async () => {
     const { ops, dbPath, getDb, close } = store();
     ops.save({ kind: "decision", title: "Use WAL mode", body: "secret body" }, "/w");
 
-    const inventory = memoryInventory(getDb, dbPath, "/w");
+    const inventory = await memoryInventory(getDb, dbPath, "/w");
     expect(inventory).toContain("[decision] Use WAL mode");
     expect(inventory).not.toContain("secret body");
     expect(inventory).toMatch(/updated \d{4}-\d{2}-\d{2}/);
     close();
   });
 
-  it("includes global entries and forgets expired ones", () => {
+  it("includes global entries and forgets expired ones", async () => {
     const { ops, dbPath, getDb, close } = store();
     ops.save({ kind: "fact", title: "global note", body: "x" }, "global");
     ops.save({ kind: "fact", title: "stale note", body: "x" }, "/w");
     getDb().conn.run("UPDATE entries SET expires_at = 1 WHERE title = 'stale note'");
 
-    const inventory = memoryInventory(getDb, dbPath, "/w");
+    const inventory = await memoryInventory(getDb, dbPath, "/w");
     expect(inventory).toContain("global note");
     expect(inventory).not.toContain("stale note");
     close();
   });
 
-  it("stays within the character budget whatever the store size", () => {
+  it("stays within the character budget whatever the store size", async () => {
     const { ops, dbPath, getDb, close } = store();
     // One transaction instead of 200 autocommits: the point is the budget, not
     // fsync throughput, and throttled CI runners otherwise push this past the
@@ -255,13 +255,13 @@ describe("memory inventory", () => {
       );
     }
     getDb().conn.run("COMMIT");
-    const inventory = memoryInventory(getDb, dbPath, "/w");
+    const inventory = await memoryInventory(getDb, dbPath, "/w");
     expect(inventory).not.toBeNull();
     expect((inventory as string).length).toBeLessThanOrEqual(INVENTORY_MAX_CHARS);
     close();
   });
 
-  it("lists lessons before more recent non-lesson entries, without duplicates", () => {
+  it("lists lessons before more recent non-lesson entries, without duplicates", async () => {
     const { ops, dbPath, getDb, close } = store();
     ops.save({ kind: "lesson", title: "old lesson: retry with batch", body: "x" }, "/w");
     for (let i = 0; i < 40; i++) {
@@ -269,7 +269,7 @@ describe("memory inventory", () => {
     }
     ops.save({ kind: "lesson", title: "new lesson: check first", body: "x" }, "/w");
 
-    const inventory = memoryInventory(getDb, dbPath, "/w") as string;
+    const inventory = (await memoryInventory(getDb, dbPath, "/w")) as string;
     expect(inventory.indexOf("new lesson")).toBeLessThan(inventory.indexOf("noise note 39"));
     expect(inventory.indexOf("old lesson")).toBeLessThan(inventory.indexOf("noise note 39"));
     expect(inventory.indexOf("new lesson")).toBeLessThan(inventory.indexOf("old lesson"));
@@ -277,11 +277,11 @@ describe("memory inventory", () => {
     close();
   });
 
-  it("announces lessons first in the header", () => {
+  it("announces lessons first in the header", async () => {
     const { ops, dbPath, getDb, close } = store();
     ops.save({ kind: "lesson", title: "a lesson", body: "x" }, "/w");
 
-    const inventory = memoryInventory(getDb, dbPath, "/w") as string;
+    const inventory = (await memoryInventory(getDb, dbPath, "/w")) as string;
     expect(inventory).toMatch(/lessons first/i);
     close();
   });
