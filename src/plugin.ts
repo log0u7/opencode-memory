@@ -244,6 +244,14 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
           ),
       }),
 
+      memory_get: tool({
+        description: TOOL_DESCRIPTIONS.get,
+        args: {
+          id: tool.schema.string().describe("Entry id to fetch in full"),
+        },
+        execute: async (args) => ops.get(args),
+      }),
+
       memory_forget: tool({
         description: TOOL_DESCRIPTIONS.forget,
         args: {

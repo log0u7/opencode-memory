@@ -36,6 +36,7 @@ describe("smoke: plugin module", () => {
       "memory_endorse",
       "memory_export",
       "memory_forget",
+      "memory_get",
       "memory_import",
       "memory_list",
       "memory_restore",

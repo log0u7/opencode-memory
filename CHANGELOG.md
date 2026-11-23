@@ -27,6 +27,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same title is never blocked). The loop closes inference-only: error → lesson →
   heat → priority injection.
 
+## [0.17.0] - 2026-11-23
+
+### Added
+
+- **Token economy — truncated search results**: `memory_search` and `memory_list` serve
+  each hit with a body preview capped at 500 characters, cut on the last word boundary
+  (a `…` suffix marks the cut). A truncated hit carries its real body length in a
+  `truncated` field, so the model knows how much text it did not see.
+- **memory_get**: full entry by id — the complete body plus `paths`, `commit_sha`,
+  `heat` and every other field the previews leave out. An unknown id answers
+  "no entry with that id"; a trashed entry points to `memory_restore` (restorable
+  30 days). Reading an entry in full counts it as used, like any served hit.
+
 ## [0.16.0] - 2026-11-23
 
 ### Added

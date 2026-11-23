@@ -249,6 +249,7 @@ describe("opencode-memory v2 setup", () => {
       "memory_endorse",
       "memory_export",
       "memory_forget",
+      "memory_get",
       "memory_import",
       "memory_list",
       "memory_restore",

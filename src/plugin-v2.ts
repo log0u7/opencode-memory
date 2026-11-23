@@ -342,6 +342,23 @@ export const MemoryV2 = Plugin.define({
       });
 
       editor.add({
+        name: "memory_get",
+        description: TOOL_DESCRIPTIONS.get,
+        input: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Entry id to fetch in full" },
+          },
+          required: ["id"],
+          additionalProperties: false,
+        },
+        async execute(args) {
+          const a = args as { id: string };
+          return { content: ops.get(a) };
+        },
+      });
+
+      editor.add({
         name: "memory_forget",
         description: TOOL_DESCRIPTIONS.forget,
         input: {
