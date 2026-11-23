@@ -7,7 +7,15 @@ import { For, Show, createSignal } from "solid-js";
 type Context = Plugin.Context;
 type Theme = Context["theme"];
 
-import { MemoryRpc, formatMemoryDialog, formatMemoryLine, type MemorySnapshot } from "./rpc.js";
+import {
+  MemoryRpc,
+  formatMemoryDialog,
+  formatMemoryLine,
+  formatMemorySidebar,
+  type MemorySidebarSnapshot,
+  type MemorySnapshot,
+} from "./rpc.js";
+import { createSidebarState, type SidebarStateRpc } from "./sidebar-state.js";
 
 const REFRESH_MS = 30_000;
 /** quota-style event refresh: debounced immediate refresh after activity. */
@@ -42,25 +50,73 @@ function dialogBody(theme: Theme, snapshot: MemorySnapshot): JSX.Element {
   );
 }
 
+/** The sidebar body: line 0 is the clickable header (bold), the rest are muted
+ * counts lines built by the pure formatMemorySidebar. Null lines (no snapshot
+ * yet or the setup side unreachable) keep the bare collapsed header. */
+function sidebarBody(
+  theme: Theme,
+  header: string,
+  body: string[],
+  onToggle: () => void,
+): JSX.Element {
+  return (
+    <box gap={0}>
+      <box flexDirection="row">
+        <text fg={theme.text.base} onMouseDown={onToggle}>
+          <b>{header}</b>
+        </text>
+      </box>
+      <For each={body}>
+        {(line) => (
+          <text fg={theme.text.muted} wrapMode="none">
+            {line}
+          </text>
+        )}
+      </For>
+    </box>
+  );
+}
+
 export default Plugin.define({
   id: "@log0u7/opencode-memory.tui",
   setup(context: Context) {
     const theme = context.theme;
     context.ui.toast.show({ message: "opencode-memory loaded", variant: "info", duration: 2000 });
 
-    // Live footer: poll the server-side snapshot over RPC. On a v1 host (no RPC)
-    // or while the server is unreachable, the slot stays hidden.
+    // Durable collapse state when the host allows it (scoped plugin ids hit a
+    // host-side segment validation error — anomalyco/opencode#62634); RPC
+    // fallback persists through the setup side; pure in-memory as last resort.
+    // The RPC client output is untyped (Promise<unknown>): narrow to the
+    // sidebar-state subset we consume.
+    const stateRpc = context.client.rpc(MemoryRpc) as unknown as SidebarStateRpc;
+    const [store, mutate] = createSidebarState(context.storage, stateRpc);
+    const [snapshot, setSnapshot] = createSignal<MemorySidebarSnapshot | null>(null);
+    const toggleCollapsed = () => {
+      // Formatting is pure: flipping the store re-renders the sidebar from the
+      // snapshot already in hand, no refetch needed.
+      void mutate((draft) => {
+        draft.collapsed = !draft.collapsed;
+      });
+    };
+
+    // Live footer + sidebar: poll both server-side snapshots over RPC. On a v1
+    // host (no RPC) or while the setup side is unreachable, both stay hidden.
     const [label, setLabel] = createSignal<string | null>(null);
-    const [snapshot, setSnapshot] = createSignal<MemorySnapshot | null>(null);
+    const [dialogSnapshot, setDialogSnapshot] = createSignal<MemorySnapshot | null>(null);
     const memory = context.client.rpc(MemoryRpc);
     const refresh = async () => {
       try {
         const next = (await memory.snapshot({})) as MemorySnapshot;
-        setSnapshot(next);
+        setDialogSnapshot(next);
         setLabel(formatMemoryLine(next));
       } catch {
         // server unreachable or v1 host: hide the footer, keep the last dialog data
         setLabel(null);
+      }
+      try {
+        setSnapshot((await memory.sidebar({})) as MemorySidebarSnapshot);
+      } catch {
+        setSnapshot(null);
       }
     };
     void refresh();
@@ -89,6 +145,26 @@ export default Plugin.define({
       render: () => themedFooter(theme, label),
     });
 
+    // The state is machine-wide, not per session: no session switch handling,
+    // the same snapshot serves every tab.
+    const unregisterSidebar = context.ui.slot({
+      append: "sidebar.content",
+      render: () => {
+        const snap = snapshot();
+        if (!snap) {
+          return (
+            <box flexDirection="row">
+              <text fg={theme.text.base}>
+                <b>▶ Memory</b>
+              </text>
+            </box>
+          );
+        }
+        const lines = formatMemorySidebar(snap, store.collapsed);
+        return sidebarBody(theme, lines[0] ?? "", lines.slice(1), toggleCollapsed);
+      },
+    });
+
     // Keymap layers are disposed with the plugin; no manual disposer here.
     context.keymap.layer(() => ({
       mode: "global",
@@ -101,7 +177,7 @@ export default Plugin.define({
           palette: true,
           run: async () => {
             await refresh();
-            const current = snapshot();
+            const current = dialogSnapshot();
             if (!current) {
               context.ui.toast.show({
                 title: "Memory",
@@ -114,6 +190,14 @@ export default Plugin.define({
             context.ui.dialog.set({ size: "medium" });
           },
         },
+        {
+          id: "memory.toggleSidebar",
+          title: "Toggle memory sidebar",
+          group: "Memory",
+          run: async () => {
+            toggleCollapsed();
+          },
+        },
       ],
     }));
 
@@ -121,6 +205,7 @@ export default Plugin.define({
       clearTimeout(debounce);
       clearInterval(timer);
       unregister();
+      unregisterSidebar();
     };
   },
 });

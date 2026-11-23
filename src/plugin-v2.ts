@@ -16,7 +16,15 @@ import {
   oncePerSession,
 } from "./lib/memory-ops.js";
 import { currentCommitHash } from "./lib/git.js";
-import { defaultMeshInboxDir, defaultMeshOutboxDir, syncExport, syncImport } from "./lib/sync.js";
+import { createDurableStore } from "./lib/persist.js";
+import {
+  defaultMeshDataDir,
+  defaultMeshInboxDir,
+  defaultMeshOutboxDir,
+  syncExport,
+  syncImport,
+} from "./lib/sync.js";
+import { buildSidebarSnapshot } from "./lib/tui-snapshot.js";
 import { createReflection, parseReflectionConfig } from "./lib/reflection.js";
 import { parseReflectionActivation, reflectionGuidance } from "./lib/reflection.js";
 import {
@@ -29,7 +37,7 @@ import {
   type PluginOptions,
 } from "./options.js";
 import { canonicalScope, stats as statsEntries } from "./lib/store.js";
-import { MemoryRpc, snapshotFromStats } from "./rpc.js";
+import { MemoryRpc, noStoreSidebar, snapshotFromStats } from "./rpc.js";
 import {
   compactionSummary,
   handleCompaction,
@@ -110,6 +118,9 @@ export const MemoryV2 = Plugin.define({
     // store has nothing to sweep and must not be created for the sweep's sake; a
     // failed sweep (locked db, full disk) is environmental and must not break setup.
     const housekeeping = parseHousekeepingConfig(options);
+    // The latest report of this process, kept for the TUI sidebar's cooled count
+    // (the sweep timestamp itself is stamped into the db metadata by the sweep).
+    let lastSweepReport: HousekeepingReport | null = null;
     const runHousekeeping = (): HousekeepingReport | null => {
       if (disposed || !housekeeping.enabled || !existsSync(dbPath)) {
         return null;
@@ -121,6 +132,7 @@ export const MemoryV2 = Plugin.define({
           now: Date.now(),
           directory: ctx.location.directory,
         });
+        lastSweepReport = report;
         // The mesh inbox pass rides the same cadence: entries pushed by paired hosts
         // since the last sweep are imported here, by the path convention in lib/sync.ts.
         syncImport(getDb(), { inboxDir: defaultMeshInboxDir() });
@@ -903,8 +915,17 @@ export const MemoryV2 = Plugin.define({
       }
     }
 
-    // Live snapshot for the TUI footer: one compact read over the store. Guarded:
-    // after dispose the store is closed, and a late RPC call must not reopen it.
+    // Live snapshots for the TUI footer and sidebar: one compact read over the
+    // store each. Guarded: after dispose the store is closed, and a late RPC
+    // call must not reopen it. Sidebar collapse state is persisted HERE (raw
+    // storage domain, escaped key) because the TUI-side storage.store() throws
+    // for scoped plugin ids (anomalyco/opencode#62634) — same workaround as the
+    // mesh sidebar.
+    const sidebarPersist = createDurableStore(
+      ctx.storage,
+      "@log0u7/opencode-memory",
+      "memory-sidebar",
+    );
     const rpc = await ctx.rpc.register(MemoryRpc, {
       snapshot: async () => {
         if (disposed) {
@@ -914,6 +935,33 @@ export const MemoryV2 = Plugin.define({
           statsEntries(getDb(), { scope: projectScope }),
           databaseSizeBytes(getDb()),
         );
+      },
+      sidebar: async () => {
+        // No store file yet: report the fallback instead of creating a db for
+        // the sidebar's sake.
+        if (disposed || !existsSync(dbPath)) {
+          return noStoreSidebar();
+        }
+        return buildSidebarSnapshot(getDb(), {
+          scope: projectScope,
+          now: Date.now(),
+          directory: ctx.location.directory,
+          cooled: lastSweepReport?.cooled ?? 0,
+          inboxDir: defaultMeshInboxDir(),
+          meshDataDir: defaultMeshDataDir(),
+        });
+      },
+      sidebar_state: async () => {
+        const state = await sidebarPersist.load<{ collapsed: boolean }>();
+        return { collapsed: state?.collapsed === true };
+      },
+      set_sidebar_state: async (input: unknown) => {
+        const collapsed =
+          typeof input === "object" && input !== null && "collapsed" in input
+            ? (input as { collapsed: unknown }).collapsed === true
+            : false;
+        await sidebarPersist.save({ collapsed });
+        return { collapsed };
       },
     });
 

@@ -1,4 +1,4 @@
-import type { MemoryDb } from "./db.js";
+import { setMeta, type MemoryDb } from "./db.js";
 import { isEntryFresh } from "./git.js";
 import { canonicalScope } from "./store.js";
 
@@ -124,6 +124,9 @@ export function sweepHousekeeping(
   }
 
   report.kept = countLive(db, scope, now);
+  // Stamped on every sweep (boot, daily, manual memory_sweep): the TUI sidebar
+  // derives "last sweep: <age>" from this row, surviving process restarts.
+  setMeta(db, "last_sweep_at", String(now));
   return report;
 }
 
