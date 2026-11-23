@@ -88,7 +88,7 @@ describe("portable export", () => {
     expect(exportPortable(dbA, SCOPE, file)).toBe(3);
 
     const dbB = openMemoryDb(":memory:");
-    expect(importPortable(dbB, file)).toBe(3);
+    expect(importPortable(dbB, file).imported).toBe(3);
     expect(JSON.stringify(allLive(dbB, SCOPE))).toBe(JSON.stringify(allLive(dbA, SCOPE)));
     dbA.close();
     dbB.close();
@@ -186,8 +186,8 @@ describe("portable import", () => {
     exportPortable(dbA, SCOPE, file);
 
     const dbB = openMemoryDb(":memory:");
-    expect(importPortable(dbB, file)).toBe(2);
-    expect(importPortable(dbB, file)).toBe(0);
+    expect(importPortable(dbB, file).imported).toBe(2);
+    expect(importPortable(dbB, file).imported).toBe(0);
     expect(allLive(dbB, SCOPE)).toHaveLength(2);
     dbA.close();
     dbB.close();
@@ -206,7 +206,7 @@ describe("portable import", () => {
         "",
       ].join("\n"),
     );
-    expect(importPortable(db, file)).toBe(1);
+    expect(importPortable(db, file).imported).toBe(1);
     expect(list(db, { scope: SCOPE }).map((entry) => entry.id)).toEqual(["good-id"]);
     db.close();
   });
@@ -226,7 +226,7 @@ describe("portable import", () => {
     expect(exportPortable(dbA, SCOPE, file)).toBe(3);
 
     const dbB = openMemoryDb(":memory:");
-    expect(importPortable(dbB, file)).toBe(2);
+    expect(importPortable(dbB, file).imported).toBe(2);
     const byId = new Map(allLive(dbB, SCOPE).map((entry) => [entry.id, entry]));
     expect(byId.get(root.id)).toBeUndefined();
     expect(byId.get(mid.id)?.status).toBe("superseded");
@@ -250,7 +250,7 @@ describe("portable import", () => {
         "",
       ].join("\n"),
     );
-    expect(importPortable(db, file)).toBe(1);
+    expect(importPortable(db, file).imported).toBe(1);
     expect(list(db, { scope: SCOPE }).map((entry) => entry.id)).toEqual(["current-1"]);
     db.close();
   });
@@ -261,7 +261,7 @@ describe("portable import", () => {
 
     const file = join(dir, "external.jsonl");
     writeFileSync(file, `${JSON.stringify(portableEntry({ supersedes: local.id }))}\n`);
-    expect(importPortable(db, file)).toBe(1);
+    expect(importPortable(db, file).imported).toBe(1);
 
     const imported = db.conn.get<{ supersedes: string | null }>(
       "SELECT supersedes FROM entries WHERE id = 'portable-1'",
@@ -344,12 +344,14 @@ describe("portable import", () => {
     exportPortable(dbA, SCOPE, file);
 
     const dbB = openMemoryDb(":memory:");
-    expect(importPortable(dbB, file, { rejectContent: (b) => b.includes("beta") })).toBe(2);
+    expect(importPortable(dbB, file, { rejectContent: (b) => b.includes("beta") }).imported).toBe(
+      2,
+    );
     expect(list(dbB, { scope: SCOPE }).map((entry) => entry.title)).toEqual(["three", "one"]);
 
     const dbC = openMemoryDb(":memory:");
-    expect(importPortable(dbC, file, { max: 0 })).toBe(0);
-    expect(importPortable(dbC, file, { max: 1 })).toBe(1);
+    expect(importPortable(dbC, file, { max: 0 }).imported).toBe(0);
+    expect(importPortable(dbC, file, { max: 1 }).imported).toBe(1);
     expect(allLive(dbC, SCOPE)).toHaveLength(1);
     dbA.close();
     dbB.close();
@@ -380,8 +382,8 @@ describe("portable paths and ops", () => {
     // A fresh store, same project: the default path is shared, the import is idempotent.
     const dbB = openMemoryDb(":memory:");
     const opsB = createMemoryOps(() => dbB);
-    expect(opsB.importEntries({}, root)).toBe(`imported 1 entries from ${expected}`);
-    expect(opsB.importEntries({}, root)).toBe(`imported 0 entries from ${expected}`);
+    expect(opsB.importEntries({}, root)).toBe(`imported 1 entries (0 skipped) from ${expected}`);
+    expect(opsB.importEntries({}, root)).toBe(`imported 0 entries (1 skipped) from ${expected}`);
     db.close();
     dbB.close();
   });

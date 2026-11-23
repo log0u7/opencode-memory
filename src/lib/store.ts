@@ -565,6 +565,27 @@ export function allLive(db: MemoryDb, scope: string): Entry[] {
     .map(rowToEntry);
 }
 
+/**
+ * The live rows of one scope that carry at least one endorsement: the content side of
+ * the cross-host sync. Two endorsement shapes qualify, and both are recorded the same
+ * way in `endorsed_by`: a peer's endorsement (someone other than the author vouched),
+ * and the author's own when the save published the entry with `shareable`. An entry
+ * with no endorsement at all stays local. The SQL pre-filters the column and the JS
+ * guard re-checks the parsed value, so a malformed `endorsed_by` blob can never leak
+ * an unendorsed row into the shareable file.
+ */
+export function listShareable(db: MemoryDb, scope: string): Entry[] {
+  return db.conn
+    .all<Row>(
+      `SELECT * FROM entries WHERE scope = ? AND ${LIVE}
+       AND endorsed_by IS NOT NULL AND endorsed_by != '[]'
+       ORDER BY created_at ASC, id ASC`,
+      [canonicalScope(scope)],
+    )
+    .map(rowToEntry)
+    .filter((entry) => (entry.endorsed_by ?? []).length > 0);
+}
+
 /** One entry by id, machine-wide (ids are globally unique), whatever its scope or
  * lifecycle. The trashed flag lets the caller tell a recoverable delete from an
  * unknown id: both answer a memory_get, but with different guidance. */

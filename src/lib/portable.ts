@@ -7,6 +7,7 @@ import type { MemoryDb } from "./db.js";
 import {
   allLive,
   FALLBACK_SCOPE,
+  listShareable,
   looksLikeSecret,
   validateEntry,
   SecretDetectedError,
@@ -25,6 +26,9 @@ export type ExportOptions = {
   rejectContent?: (body: string) => boolean;
   /** Cap the file at the first `limit` entries in file order. */
   limit?: number;
+  /** Export only the entries worth sharing cross-host: at least one endorsement
+   * (a peer's, or the author's own when the save published with `shareable`). */
+  shareable?: boolean;
 };
 
 export type ImportOptions = {
@@ -81,7 +85,7 @@ export function exportPortable(
   filePath: string,
   opts: ExportOptions = {},
 ): number {
-  const entries = allLive(db, scope);
+  const entries = opts.shareable === true ? listShareable(db, scope) : allLive(db, scope);
   const capped =
     opts.limit === undefined ? entries : entries.slice(0, Math.max(0, Math.trunc(opts.limit)));
   const kept = capped.filter(
@@ -104,9 +108,14 @@ export function exportPortable(
  * holds in both directions: a `superseded` entry imports only when its own `supersedes`
  * target travels in the same file, and a current entry whose target stays outside the
  * file imports without the link, so an import never tombstones or claims local rows.
- * Returns the number of entries inserted.
+ * Returns how many entries were inserted and how many valid lines were skipped (ids
+ * already present, caller-side content rejects, orphan superseded rows, the `max` cap).
  */
-export function importPortable(db: MemoryDb, filePath: string, opts: ImportOptions = {}): number {
+export function importPortable(
+  db: MemoryDb,
+  filePath: string,
+  opts: ImportOptions = {},
+): { imported: number; skipped: number } {
   const batch = readBatch(filePath);
   const batchIds = new Set(batch.map((entry) => entry.id));
   const max = opts.max === undefined ? undefined : Math.max(0, Math.trunc(opts.max));
@@ -135,7 +144,7 @@ export function importPortable(db: MemoryDb, filePath: string, opts: ImportOptio
     insertImported(db, entry, link);
     imported += 1;
   }
-  return imported;
+  return { imported, skipped: batch.length - imported };
 }
 
 /** Parse and validate every non-empty line up front, so validation failures surface
