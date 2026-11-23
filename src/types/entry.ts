@@ -32,6 +32,10 @@ export type Entry = {
    * re-recorded under the same title. At or above HOT_THRESHOLD the entry is
    * hot: the inventory injects it outside the character budget. Unset when 0. */
   heat?: number;
+  /** Agents that vouched for the entry, author included when the author published
+   * it with `shareable` at save time. One endorsement from an agent other than the
+   * author makes the entry shareable. Unset while nobody vouched. */
+  endorsed_by?: string[];
 };
 
 export type EntryInput = {
@@ -46,6 +50,9 @@ export type EntryInput = {
   commit_sha?: string;
   /** The entry this one replaces (saveEntry validates and marks the old row). */
   supersedes?: string;
+  /** Publish without peer endorsement: the author vouches, and the save records the
+   * author's own endorsement in `endorsed_by`. */
+  shareable?: boolean;
   /** Reserved: saveEntry manages the lifecycle itself. */
   status?: "current" | "superseded";
 };

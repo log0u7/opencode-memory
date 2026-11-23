@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-23
+
+### Added
+
+- **Endorsement + shareable flag (light quorum)**: an entry becomes worth sharing across
+  hosts once one agent other than its author vouches for it. `memory_endorse` appends the
+  endorser to `endorsed_by` (idempotent per endorser) and any endorser different from the
+  author flips the entry to shareable. The author's own endorsement alone never qualifies.
+- **Publish at save**: `memory_save` accepts `shareable: true` — the author vouches for
+  the entry themselves, the save records the author's endorsement in `endorsed_by`, and
+  existing endorsements (author or peers) survive a rewrite under the same title.
+- **Reflection activation (the inference-only RL loop)**: a standing directive injected
+  next to the memory guidance — when corrected or after a failed approach, the current
+  model distills the lesson itself (`memory_save(kind=lesson, paths=[...])`), no separate
+  model call. On by default; `reflection: false` (or an object config without
+  `enabled: true`) switches it off, and an object config's `maxLessons` doubles as the
+  per-day fresh-lesson budget that gates new lessons (refining an existing lesson under
+  the same title is never blocked). The loop closes inference-only: error → lesson →
+  heat → priority injection.
+
 ## [0.17.0] - 2026-11-23
 
 ### Added
