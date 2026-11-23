@@ -145,7 +145,9 @@ export function runHousekeepingPass(
 ): HousekeepingReport {
   const report = sweepHousekeeping(db, options);
   syncImport(db, { inboxDir: defaultMeshInboxDir() });
-  syncExport(db, { outboxDir: defaultMeshOutboxDir(), scope: options.scope });
+  // Machine-wide: the outbox carries every scope's shareables, not just the calling
+  // project's — the other projects lose their pushes otherwise.
+  syncExport(db, { outboxDir: defaultMeshOutboxDir() });
   return report;
 }
 

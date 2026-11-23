@@ -8,6 +8,7 @@ import {
   allLive,
   FALLBACK_SCOPE,
   listShareable,
+  listShareableAll,
   looksLikeSecret,
   validateEntry,
   SecretDetectedError,
@@ -19,6 +20,12 @@ import {
 export const PORTABLE_FILE_NAME = "memory-export.jsonl";
 
 const ID_MAX = 200;
+const SCOPE_MAX = 512;
+const SOURCE_MAX = 256;
+/** A line stamped further in the future than this is hostile or clock-broken. */
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
+/** expires_at may reach at most a decade ahead: no credible TTL needs more. */
+const EXPIRES_MAX_MS = 10 * 365 * 24 * 60 * 60 * 1000;
 
 export type ExportOptions = {
   /** Extra caller-side content filter (e.g. a stricter secret policy): an entry whose
@@ -29,6 +36,12 @@ export type ExportOptions = {
   /** Export only the entries worth sharing cross-host: at least one endorsement
    * (a peer's, or the author's own when the save published with `shareable`). */
   shareable?: boolean;
+  /** With `shareable`, export the shareable entries of every scope, not just the
+   * caller's: the mesh outbox is one machine-wide file. */
+  allScopes?: boolean;
+  /** Stamp every exported line with this machine's hostname as `origin_host`:
+   * the peer marker that tells a remote import to remap the scope to `global`. */
+  originHost?: string;
 };
 
 export type ImportOptions = {
@@ -85,7 +98,12 @@ export function exportPortable(
   filePath: string,
   opts: ExportOptions = {},
 ): number {
-  const entries = opts.shareable === true ? listShareable(db, scope) : allLive(db, scope);
+  const entries =
+    opts.shareable === true
+      ? opts.allScopes === true
+        ? listShareableAll(db)
+        : listShareable(db, scope)
+      : allLive(db, scope);
   const capped =
     opts.limit === undefined ? entries : entries.slice(0, Math.max(0, Math.trunc(opts.limit)));
   const kept = capped.filter(
@@ -93,7 +111,13 @@ export function exportPortable(
   );
   writeAtomically(
     filePath,
-    kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length > 0 ? "\n" : ""),
+    kept
+      .map((entry) =>
+        JSON.stringify(
+          opts.originHost === undefined ? entry : { ...entry, origin_host: opts.originHost },
+        ),
+      )
+      .join("\n") + (kept.length > 0 ? "\n" : ""),
   );
   return kept.length;
 }
@@ -103,6 +127,15 @@ export function exportPortable(
  * is idempotent and cross-machine copies stay the same entries. Lines are validated
  * before anything is written; a structurally broken line aborts the whole import with
  * its line number, because a half-understood file must not become half a store.
+ *
+ * Entries stamped with an `origin_host` (the marker the mesh outbox export adds) are
+ * cross-host knowledge: their scope is a path that only exists on the machine that
+ * wrote them, and importing it verbatim would bury the entry in a scope this host
+ * never reads. Such entries are remapped to the `global` scope, so the local reads
+ * (search, list, inventory) surface them. The trust model is assumed, not verified
+ * per entry: transport runs between TLS-pinned paired hosts, exports are secret-
+ * scanned, and only endorsed entries travel; cross-host knowledge is machine-wide
+ * by nature, hence the `global` destination.
  *
  * Existing ids are skipped, secret-like content is skipped, and the workflow-guard rule
  * holds in both directions: a `superseded` entry imports only when its own `supersedes`
@@ -116,7 +149,8 @@ export function importPortable(
   filePath: string,
   opts: ImportOptions = {},
 ): { imported: number; skipped: number } {
-  const batch = readBatch(filePath);
+  const now = Date.now();
+  const batch = readBatch(filePath, now);
   const batchIds = new Set(batch.map((entry) => entry.id));
   const max = opts.max === undefined ? undefined : Math.max(0, Math.trunc(opts.max));
   let imported = 0;
@@ -141,7 +175,13 @@ export function importPortable(
       entry.supersedes !== undefined && batchIds.has(entry.supersedes)
         ? entry.supersedes
         : undefined;
-    insertImported(db, entry, link);
+    // Peer entries land in `global` (see above); local exports keep their scope
+    // verbatim, the 0.13.0 same-machine round-trip behavior.
+    insertImported(
+      db,
+      entry.origin_host === undefined ? entry : { ...entry, scope: "global" },
+      link,
+    );
     imported += 1;
   }
   return { imported, skipped: batch.length - imported };
@@ -150,7 +190,7 @@ export function importPortable(
 /** Parse and validate every non-empty line up front, so validation failures surface
  * before any write. The built-in secret scan skips instead of throwing: refusing one
  * credential-looking line must not make the rest of the file unreadable. */
-function readBatch(filePath: string): Entry[] {
+function readBatch(filePath: string, now: number): Entry[] {
   const lines = readFileSync(filePath, "utf8").split("\n");
   const batch: Entry[] = [];
   for (const [index, raw] of lines.entries()) {
@@ -158,7 +198,7 @@ function readBatch(filePath: string): Entry[] {
     if (line.length === 0) {
       continue;
     }
-    const entry = parseLine(line, index + 1);
+    const entry = parseLine(line, index + 1, now);
     try {
       validateEntry(entry);
     } catch (error) {
@@ -172,7 +212,7 @@ function readBatch(filePath: string): Entry[] {
   return batch;
 }
 
-function parseLine(line: string, lineNo: number): Entry {
+function parseLine(line: string, lineNo: number, now: number): Entry {
   let raw: unknown;
   try {
     raw = JSON.parse(line);
@@ -193,6 +233,38 @@ function parseLine(line: string, lineNo: number): Entry {
   if (typeof scope !== "string" || scope.length === 0) {
     throw new Error(`line ${lineNo}: scope must be a non-empty string`);
   }
+  if (scope.length > SCOPE_MAX) {
+    throw new Error(`line ${lineNo}: scope must be at most ${SCOPE_MAX} characters`);
+  }
+  if (fields.source !== undefined && typeof fields.source === "string") {
+    if (fields.source.length > SOURCE_MAX) {
+      throw new Error(`line ${lineNo}: source must be at most ${SOURCE_MAX} characters`);
+    }
+  }
+  const created_at = expectNumber(fields.created_at, "created_at", lineNo);
+  if (created_at > now + CLOCK_SKEW_MS) {
+    throw new Error(
+      `line ${lineNo}: created_at must not be more than 5 minutes in the future (clock skew or hostile file)`,
+    );
+  }
+  const updated_at = expectNumber(fields.updated_at, "updated_at", lineNo);
+  if (updated_at > now + CLOCK_SKEW_MS) {
+    throw new Error(
+      `line ${lineNo}: updated_at must not be more than 5 minutes in the future (clock skew or hostile file)`,
+    );
+  }
+  const expires_at =
+    fields.expires_at === undefined || fields.expires_at === null
+      ? null
+      : expectNumber(fields.expires_at, "expires_at", lineNo);
+  if (expires_at !== null && expires_at > now + EXPIRES_MAX_MS) {
+    throw new Error(`line ${lineNo}: expires_at must not be more than 10 years in the future`);
+  }
+  if (fields.origin_host !== undefined) {
+    if (typeof fields.origin_host !== "string" || fields.origin_host.length === 0) {
+      throw new Error(`line ${lineNo}: origin_host must be a non-empty string`);
+    }
+  }
   return {
     id,
     scope,
@@ -200,13 +272,11 @@ function parseLine(line: string, lineNo: number): Entry {
     title: expectString(fields.title, "title", lineNo),
     body: expectString(fields.body, "body", lineNo),
     tags: expectStringArray(fields.tags, "tags", lineNo),
-    created_at: expectNumber(fields.created_at, "created_at", lineNo),
-    updated_at: expectNumber(fields.updated_at, "updated_at", lineNo),
-    expires_at:
-      fields.expires_at === undefined || fields.expires_at === null
-        ? null
-        : expectNumber(fields.expires_at, "expires_at", lineNo),
+    created_at,
+    updated_at,
+    expires_at,
     ...(typeof fields.source === "string" ? { source: fields.source } : {}),
+    ...(fields.origin_host !== undefined ? { origin_host: fields.origin_host as string } : {}),
     ...(fields.paths === undefined
       ? {}
       : { paths: expectStringArray(fields.paths, "paths", lineNo) }),
