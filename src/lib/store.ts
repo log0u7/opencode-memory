@@ -482,6 +482,53 @@ export function oldestCreated(db: MemoryDb, query: { scope: string; now?: number
   return row?.oldest ?? null;
 }
 
+/** An entry counts as used once a read served it to the model: searches touch the hits
+ * and the inventory injection touches the lines it kept under its character budget. */
+export function touchUsage(db: MemoryDb, ids: string[], now: number): void {
+  if (ids.length === 0) {
+    return;
+  }
+  db.conn.run(
+    `UPDATE entries SET use_count = use_count + 1, last_used = ?
+     WHERE id IN (${ids.map(() => "?").join(", ")})`,
+    [now, ...ids],
+  );
+}
+
+/** How long an entry may sit unused before the stats report proposes forgetting it:
+ * the same 30 days the trash keeps, so a proposal and its tombstone share one clock. */
+export const NEVER_RECALLED_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Default cap on a never-recalled report; the stats section reads at most this many. */
+export const NEVER_RECALLED_DEFAULT_LIMIT = 20;
+
+/**
+ * Live entries of one scope plus `global` that were never served to the model and have
+ * been sitting older than `olderThanMs` (default 30 days), oldest first: the purge-on-
+ * proposal list. The store deletes nothing here — the caller decides, through
+ * memory_forget, which rows deserve the trash.
+ */
+export function neverRecalled(
+  db: MemoryDb,
+  query: { scope: string; now?: number },
+  options: { olderThanMs?: number; limit?: number } = {},
+): Entry[] {
+  const scope = canonicalScope(query.scope);
+  const now = query.now ?? Date.now();
+  const olderThanMs = options.olderThanMs ?? NEVER_RECALLED_AGE_MS;
+  const limit = clampLimit(options.limit, NEVER_RECALLED_DEFAULT_LIMIT);
+  return db.conn
+    .all<Row>(
+      `SELECT * FROM entries
+       WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?)
+         AND status != 'superseded' AND ${LIVE} AND use_count = 0 AND created_at <= ?
+       ORDER BY created_at ASC, id ASC
+       LIMIT ?`,
+      [scope, now, now - olderThanMs, limit],
+    )
+    .map(rowToEntry);
+}
+
 /**
  * Query deletes stay inside one scope (plus the shared `global` scope): a fuzzy match
  * must never silently hit other projects' entries. Id deletes are machine-wide because

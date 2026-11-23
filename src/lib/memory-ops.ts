@@ -6,6 +6,7 @@ import { exportPortable, importPortable, resolvePortablePath } from "./portable.
 import {
   forget,
   list,
+  neverRecalled,
   oldestCreated,
   renderEntries,
   restore,
@@ -14,6 +15,7 @@ import {
   SecretDetectedError,
   stats,
   suggestReplacements,
+  touchUsage,
 } from "./store.js";
 import { sweepHousekeeping, type HousekeepingReport } from "./housekeeping.js";
 import type { Entry } from "../types/entry.js";
@@ -107,6 +109,15 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
           scope,
           ...(args.limit !== undefined ? { limit: args.limit } : {}),
         });
+        // Entries served to the model count as used: this is what keeps them off the
+        // never-recalled purge proposal.
+        if (hits.length > 0) {
+          touchUsage(
+            getDb(),
+            hits.map((hit) => hit.id),
+            Date.now(),
+          );
+        }
         return hits.length === 0 ? "no matching memory entries" : renderEntries(hits);
       }),
     list: (args, scope) =>
@@ -144,9 +155,16 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
         const oldest = oldestCreated(getDb(), { scope });
         const size = formatBytes(databaseSizeBytes(getDb()));
         const age = oldest === null ? "" : `, oldest: ${dayOf(oldest)}`;
-        return `store: ${size}${age}, ${counts
+        let text = `store: ${size}${age}, ${counts
           .map((row) => `${row.kind}: ${row.count}`)
           .join(", ")}, total: ${total}`;
+        // Purge on proposal only: the store never deletes on its own, the agent or the
+        // user decides which never-recalled entries deserve memory_forget.
+        const never = neverRecalled(getDb(), { scope });
+        if (never.length > 0) {
+          text += `\nnever-recalled: ${never.length} (${renderRemoved(never)}) - forgotten by no one so far; propose memory_forget for the ones that are no longer useful`;
+        }
+        return text;
       }),
     restore: (args) =>
       run(() => {
@@ -241,7 +259,7 @@ export const TOOL_DESCRIPTIONS = {
   forget:
     "Delete memory entries by id (any scope: ids are globally unique), or all entries matching a query. Query deletes stay inside this project's scope (plus global entries); an entry saved under another scope needs its id, or that scope, to be removed.",
   stats:
-    "Count memory entries by kind for this project (plus global entries), with a total. Use it to see how much memory already exists, for example how many lessons reflection has written.",
+    "Count memory entries by kind for this project (plus global entries), with a total. Use it to see how much memory already exists, for example how many lessons reflection has written. The result also names never-recalled entries (stored 30+ days, never served to the model): a purge proposal only, forget the ones you no longer need with memory_forget.",
   restore:
     "Put a trashed entry back, by id. Deletes are recoverable: memory_forget reports the ids it trashed, and memory_restore brings one of them back. An entry stays restorable for 30 days.",
   exportEntries:
@@ -316,6 +334,7 @@ export function memoryInventory(
 
   const lines = [INVENTORY_HEADER];
   let size = INVENTORY_HEADER.length;
+  const injected: string[] = [];
   for (const entry of fresh) {
     const by = entry.source === undefined ? "" : `, by ${entry.source}`;
     const line = `- [${entry.kind}] ${entry.title} (updated ${dayOf(entry.updated_at)}${by})`;
@@ -323,7 +342,13 @@ export function memoryInventory(
       break;
     }
     lines.push(line);
+    injected.push(entry.id);
     size += line.length + 1;
+  }
+  // Only the lines that made it under the character budget were actually served to the
+  // model, so only those count as used; the cut entries stay never-recalled candidates.
+  if (injected.length > 0) {
+    touchUsage(getDb(), injected, Date.now());
   }
   return lines.join("\n");
 }
