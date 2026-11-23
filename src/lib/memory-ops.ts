@@ -5,6 +5,7 @@ import { isEntryFresh } from "./git.js";
 import { exportPortable, importPortable, resolvePortablePath } from "./portable.js";
 import {
   forget,
+  getById,
   HOT_THRESHOLD,
   list,
   neverRecalled,
@@ -42,6 +43,7 @@ export type SaveArgs = {
 };
 export type SearchArgs = { query: string; limit?: number | undefined };
 export type ListArgs = { limit?: number | undefined };
+export type GetArgs = { id: string };
 export type ForgetArgs = { id?: string | undefined; query?: string | undefined };
 export type RestoreArgs = { id: string };
 export type ExportArgs = { scope?: string | undefined; path?: string | undefined };
@@ -54,6 +56,7 @@ export type MemoryOps = {
   save: (args: SaveArgs, scope: string, source?: string) => string;
   search: (args: SearchArgs, scope: string) => string;
   list: (args: ListArgs, scope: string) => string;
+  get: (args: GetArgs) => string;
   forget: (args: ForgetArgs, scope: string) => string;
   stats: (scope: string) => string;
   restore: (args: RestoreArgs) => string;
@@ -137,6 +140,19 @@ export function createMemoryOps(
           ...(args.limit !== undefined ? { limit: args.limit } : {}),
         });
         return entries.length === 0 ? "no memory entries" : renderEntries(entries);
+      }),
+    get: (args) =>
+      run(() => {
+        const found = getById(getDb(), args.id);
+        if (found === null) {
+          return "no entry with that id";
+        }
+        if (found.trashed) {
+          return "entry is in the trash (restorable for 30 days): use memory_restore to put it back";
+        }
+        // A full read serves the entry to the model, same as a search hit does.
+        touchUsage(getDb(), [args.id], Date.now());
+        return JSON.stringify(found.entry);
       }),
     forget: (args, scope) =>
       run(() => {
@@ -272,6 +288,7 @@ export const TOOL_DESCRIPTIONS = {
   search:
     "Search shared working memory (all sessions on this machine). Results include this project's scope and global entries: entries matching every query token come first, then entries matching some token as a prefix fill the remaining slots.",
   list: "List recent memory entries for a scope (default: this project), newest first.",
+  get: "Full entry by id — the search results are truncated to 500 chars; memory_get gives the complete entry.",
   forget:
     "Delete memory entries by id (any scope: ids are globally unique), or all entries matching a query. Query deletes stay inside this project's scope (plus global entries); an entry saved under another scope needs its id, or that scope, to be removed.",
   stats:

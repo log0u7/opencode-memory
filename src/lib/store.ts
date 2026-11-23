@@ -151,15 +151,26 @@ function previewBody(body: string): string {
   if (body.length <= BODY_PREVIEW_MAX) {
     return body;
   }
-  return `${body.slice(0, BODY_PREVIEW_MAX)}… [truncated]`;
+  // Cut on the last word boundary inside the budget so a preview never ends
+  // mid-word; a body with no break inside the budget is cut hard instead.
+  const cut = body.slice(0, BODY_PREVIEW_MAX);
+  const boundary = cut.search(/\s[\S]*$/);
+  const head = boundary === -1 ? cut : cut.slice(0, boundary).trimEnd();
+  return `${head}…`;
 }
 
 /**
  * Model-facing rendering of a result set. Compact JSON and truncated bodies keep a
- * tool result inside a known size regardless of how much is stored.
+ * tool result inside a known size regardless of how much is stored. A truncated hit
+ * carries its real body length in `truncated`: the full text comes from memory_get.
  */
 export function renderEntries(entries: Entry[]): string {
-  return JSON.stringify(entries.map((entry) => ({ ...entry, body: previewBody(entry.body) })));
+  return JSON.stringify(
+    entries.map((entry) => {
+      const body = previewBody(entry.body);
+      return entry.body === body ? entry : { ...entry, body, truncated: entry.body.length };
+    }),
+  );
 }
 
 export function sweep(db: MemoryDb, options: { now?: number } = {}): number {
@@ -463,6 +474,17 @@ export function allLive(db: MemoryDb, scope: string): Entry[] {
       canonicalScope(scope),
     ])
     .map(rowToEntry);
+}
+
+/** One entry by id, machine-wide (ids are globally unique), whatever its scope or
+ * lifecycle. The trashed flag lets the caller tell a recoverable delete from an
+ * unknown id: both answer a memory_get, but with different guidance. */
+export function getById(db: MemoryDb, id: string): { entry: Entry; trashed: boolean } | null {
+  const row = db.conn.get<Row>("SELECT * FROM entries WHERE id = ?", [id]);
+  if (row === null) {
+    return null;
+  }
+  return { entry: rowToEntry(row), trashed: row.deleted_at !== null };
 }
 
 export type ForgetTarget = { scope: string } & ({ id: string } | { query: string });

@@ -659,7 +659,7 @@ describe("store rendering", () => {
     const rendered = renderEntries(entries);
 
     expect(rendered.length).toBeLessThan(BODY_PREVIEW_MAX + 500);
-    expect(rendered).toContain("[truncated]");
+    expect(rendered).toContain('"truncated":8000');
     expect(rendered).toContain(entries[0]?.title ?? "");
     db.close();
   });

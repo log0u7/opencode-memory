@@ -8,7 +8,7 @@
 
 Working memory for [OpenCode](https://opencode.ai): a shared SQLite store that all sessions on a machine read and write, so decisions, facts, and lessons survive session boundaries. And when compaction hits, the full transcript is exported and a ~120-token pointer replaces the lossy summary: exact recall, zero model tokens.
 
-Every session gets the memory tools (`memory_save`, `memory_search`, `memory_list`, `memory_forget`, `memory_stats`, `memory_restore`, `memory_sweep`) plus transcript search, reading and cleanup when context retrieval is enabled. Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, entries matching every query token first, then prefix matches fill the remaining slots). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
+Every session gets the memory tools (`memory_save`, `memory_search`, `memory_list`, `memory_get`, `memory_forget`, `memory_stats`, `memory_restore`, `memory_sweep`) plus transcript search, reading and cleanup when context retrieval is enabled. Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, entries matching every query token first, then prefix matches fill the remaining slots). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
 
 ## Why
 
@@ -96,8 +96,9 @@ memory_stats()
 | Tool | Args | Description |
 |---|---|---|
 | `memory_save` | `kind`, `title`, `body`, `scope?`, `tags?`, `expires_at?` | Save an entry. Default scope is the session worktree. |
-| `memory_search` | `query`, `scope?`, `limit?` | FTS5 BM25 search; entries matching every query token first, then prefix matches fill the remaining slots. |
-| `memory_list` | `scope?`, `limit?` | Recent entries, newest first. |
+| `memory_search` | `query`, `scope?`, `limit?` | FTS5 BM25 search; entries matching every query token first, then prefix matches fill the remaining slots. Bodies are previews capped at 500 chars (word-boundary cut, `truncated` field carries the real length). |
+| `memory_list` | `scope?`, `limit?` | Recent entries, newest first (same 500-char body previews). |
+| `memory_get` | `id` | Full entry by id: the complete body plus `paths`, `commit_sha`, `heat`. |
 | `memory_forget` | `id` or `query` | Trash one entry by id, or all matching a query. |
 | `memory_stats` | `scope?` | Count entries by kind (plus global) with a total, plus the store size and oldest entry. |
 | `memory_restore` | `id` | Put a trashed entry back, wherever it lived. |

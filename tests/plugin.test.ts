@@ -108,6 +108,7 @@ describe("memory plugin tools", () => {
     expect(Object.keys(tools).sort()).toEqual([
       "memory_export",
       "memory_forget",
+      "memory_get",
       "memory_import",
       "memory_list",
       "memory_restore",
@@ -217,7 +218,7 @@ describe("memory plugin tools", () => {
       await tools.memory_search?.execute({ query: "postgres", limit: 1e9 }, ctx()),
     );
     expect(JSON.parse(raw)).toHaveLength(MAX_LIMIT);
-    expect(raw).toContain("[truncated]");
+    expect(raw).toContain('"truncated":8000');
   });
 
   it("refuses credentials hidden in the title", async () => {
