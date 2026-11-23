@@ -41,6 +41,7 @@ describe("smoke: plugin module", () => {
       "memory_save",
       "memory_search",
       "memory_stats",
+      "memory_sweep",
     ]);
     await hooks.dispose?.();
   });

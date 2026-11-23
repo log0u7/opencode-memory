@@ -8,7 +8,7 @@
 
 Working memory for [OpenCode](https://opencode.ai): a shared SQLite store that all sessions on a machine read and write, so decisions, facts, and lessons survive session boundaries. And when compaction hits, the full transcript is exported and a ~120-token pointer replaces the lossy summary: exact recall, zero model tokens.
 
-Every session gets six memory tools (`memory_save`, `memory_search`, `memory_list`, `memory_forget`, `memory_stats`, `memory_restore`) plus transcript search, reading and cleanup when context retrieval is enabled. Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, entries matching every query token first, then prefix matches fill the remaining slots). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
+Every session gets the memory tools (`memory_save`, `memory_search`, `memory_list`, `memory_forget`, `memory_stats`, `memory_restore`, `memory_sweep`) plus transcript search, reading and cleanup when context retrieval is enabled. Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, entries matching every query token first, then prefix matches fill the remaining slots). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
 
 ## Why
 
@@ -101,6 +101,7 @@ memory_stats()
 | `memory_forget` | `id` or `query` | Trash one entry by id, or all matching a query. |
 | `memory_stats` | `scope?` | Count entries by kind (plus global) with a total, plus the store size and oldest entry. |
 | `memory_restore` | `id` | Put a trashed entry back, wherever it lived. |
+| `memory_sweep` | `scope?`, `ttl_days?` | Run the housekeeping sweep now: tombstone dated stale entries (recoverable 30 days) and delete exact duplicates, keeping the newest copy. |
 | `memory_session_search` | `query`, `sessionID?`, `contextLines?`, `maxBytes?` | Search exported session transcripts for exact lines (case-insensitive), with line numbers and surrounding context. |
 | `memory_session_read` | `sessionID`, `offset?`, `limit?`, `maxBytes?` | Read a numbered window of one exported transcript by 1-based line. |
 | `memory_transcript_list` | `all?`, `scope?` | List exported transcripts with size, age and last touch (storage visibility). |
@@ -111,6 +112,20 @@ memory_stats()
 The plugin ships a TUI part (auto-loaded by OpenCode): a toast on load, a `/memory` slash command, and a status slot in the home footer. Slash commands and the memory tools remain the primary interface.
 
 Entry `kind` is free-form; conventions that work well: `decision`, `fact`, `preference`, `gotcha`, `lesson`, `compaction`.
+
+### Housekeeping
+
+The store is swept automatically so it stays readable: once at plugin boot and then every 24 hours, the project scope (plus `global`) gets a conservative pass, reported by `memory_sweep(scope?, ttl_days?)` on demand.
+
+- **Dated entries**: an entry whose content carries a state marker (ISO dates, `état:`, `état au`, `state as of`, `en cours`, `en vol`, `attente`, `pending`, `ETA`) and has not been updated for 7 days is tombstoned (`deleted_at`), following the standard 30-day trash: `memory_restore` puts it back.
+- **Exact duplicates**: two live entries of the same scope with the same normalized title and body, and the same anchoring, collapse to the newest copy; the older ones are deleted for good (an exact duplicate adds nothing to the trash).
+
+Exemptions keep the sweep conservative: `lesson` entries are never dated-swept (an anchored lesson's freshness is the anchoring's job, decided at read time), `epic`/`task` entries (orchestrator steering) are exempt from both rules, and anchored entries (paths + commit) are left to the anchoring — the inventory already stops asserting them when their code moved.
+
+Options:
+
+- `housekeeping` (default `true`): set `false` to disable the automatic boot/daily sweep (`memory_sweep` stays available).
+- `sweepTtlDays` (default `7`): the age threshold of the dated rule.
 
 ### How it fits together
 

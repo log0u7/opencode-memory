@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MemoryPlugin } from "../src/plugin.js";
-import { list } from "../src/lib/store.js";
+import { openMemoryDb } from "../src/lib/db.js";
+import { list, save } from "../src/lib/store.js";
 import { MAX_LIMIT } from "../src/lib/store.js";
 import type { ToolContext } from "@opencode-ai/plugin";
 
@@ -102,7 +103,7 @@ function reflectionClient(promptImpl?: unknown) {
 }
 
 describe("memory plugin tools", () => {
-  it("registers the eight memory tools", async () => {
+  it("registers the memory tools", async () => {
     const tools = await loadTools({ dbPath: join(dir, "m.db") });
     expect(Object.keys(tools).sort()).toEqual([
       "memory_export",
@@ -113,6 +114,7 @@ describe("memory plugin tools", () => {
       "memory_save",
       "memory_search",
       "memory_stats",
+      "memory_sweep",
     ]);
   });
 
@@ -321,6 +323,68 @@ describe("memory plugin empty results", () => {
       "no matching memory entries",
     );
     expect(await tools.memory_list?.execute({}, ctx())).toBe("no memory entries");
+  });
+});
+
+describe("memory plugin housekeeping", () => {
+  it("sweeps automatically at boot and again through memory_sweep", async () => {
+    const dbPath = join(dir, "sweep.db");
+    const seed = openMemoryDb(dbPath);
+    const stale = save(
+      seed,
+      {
+        scope: WORKTREE,
+        kind: "fact",
+        title: "deploy status",
+        body: "état: pending",
+        tags: [],
+        expires_at: null,
+      },
+      { now: Date.now() - 10 * 24 * 60 * 60 * 1000 },
+    );
+    seed.close();
+
+    // The boot sweep tombstones the stale dated entry before any tool call.
+    const tools = await loadTools({ dbPath });
+    expect(await tools.memory_list?.execute({}, ctx())).toBe("no memory entries");
+
+    // On demand: nothing new to move, and the tombstone stays restorable.
+    expect(await tools.memory_sweep?.execute({}, ctx())).toBe(
+      "swept: 0 tombstoned (dated), 0 deleted (duplicate), 0 kept",
+    );
+    expect(await tools.memory_restore?.execute({ id: stale.id }, ctx())).toContain("restored");
+    expect(await tools.memory_sweep?.execute({}, ctx())).toMatch(
+      /^swept: 1 tombstoned \(dated\), 0 deleted \(duplicate\), 0 kept\n/,
+    );
+  });
+
+  it("sweeps on the daily interval and stops at dispose", async () => {
+    vi.useFakeTimers();
+    try {
+      const dbPath = join(dir, "interval.db");
+      const hooks = await MemoryPlugin(fakeInput(), { dbPath });
+      const tools = hooks.tool ?? {};
+      await tools.memory_save?.execute(
+        { kind: "fact", title: "tick status", body: "état: pending", tags: [] },
+        ctx(),
+      );
+
+      // Eight daily ticks make the saved entry older than the 7-day TTL; the
+      // daily sweep tombstones it once it crosses the threshold.
+      await vi.advanceTimersByTimeAsync(8 * 24 * 60 * 60 * 1000);
+      const db = openMemoryDb(dbPath);
+      expect(list(db, { scope: WORKTREE })).toHaveLength(0);
+      db.close();
+
+      await hooks.dispose?.();
+      // The interval is cleared: advancing past the next tick must not reopen or fail.
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+      expect(
+        await tools.memory_save?.execute({ kind: "fact", title: "x", body: "y" }, ctx()),
+      ).toContain("error:");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -8,7 +8,7 @@ import type { ToolContext } from "@opencode-ai/plugin";
 
 import { MemoryPlugin } from "../src/plugin.js";
 import { pluginModule } from "../src/index.js";
-import { list, MAX_LIMIT } from "../src/lib/store.js";
+import { list, MAX_LIMIT, restore, save } from "../src/lib/store.js";
 import { openMemoryDb } from "../src/lib/db.js";
 import { writeTranscriptFile } from "../src/compaction.js";
 
@@ -199,6 +199,45 @@ describe("v1 and v2 share one behaviour", () => {
   });
 });
 
+describe("opencode-memory v2 housekeeping", () => {
+  it("sweeps automatically at setup and exposes memory_sweep", async () => {
+    const dbPath = tmpDbPath();
+    const seed = openMemoryDb(dbPath);
+    const stale = save(
+      seed,
+      {
+        scope: "/home/u/project",
+        kind: "fact",
+        title: "deploy status",
+        body: "état: pending",
+        tags: [],
+        expires_at: null,
+      },
+      { now: Date.now() - 10 * 24 * 60 * 60 * 1000 },
+    );
+    seed.close();
+
+    const { ctx, added } = fakeCtx(dbPath);
+    const cleanup = await pluginModule.setup(ctx);
+
+    // The setup sweep tombstoned the stale dated entry.
+    const db = openMemoryDb(dbPath);
+    expect(list(db, { scope: "/home/u/project" })).toHaveLength(0);
+    db.close();
+
+    const sweepTool = added.find((t) => t.name === "memory_sweep");
+    expect((await sweepTool?.execute({}, { sessionID: "s1" }))?.content).toBe(
+      "swept: 0 tombstoned (dated), 0 deleted (duplicate), 0 kept",
+    );
+
+    // The tombstone stays restorable through the store.
+    const reopened = openMemoryDb(dbPath);
+    expect(restore(reopened, { id: stale.id })?.id).toBe(stale.id);
+    reopened.close();
+    await cleanup?.();
+  });
+});
+
 describe("opencode-memory v2 setup", () => {
   it("registers the memory tools", async () => {
     const dbPath = tmpDbPath();
@@ -217,6 +256,7 @@ describe("opencode-memory v2 setup", () => {
       "memory_session_read",
       "memory_session_search",
       "memory_stats",
+      "memory_sweep",
       "memory_transcript_cleanup",
       "memory_transcript_list",
     ]);

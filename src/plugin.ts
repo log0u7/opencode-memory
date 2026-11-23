@@ -1,7 +1,14 @@
+import { existsSync } from "node:fs";
+
 import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 
 import { openMemoryDb, type MemoryDb } from "./lib/db.js";
+import {
+  HOUSEKEEPING_INTERVAL_MS,
+  sweepHousekeeping,
+  type HousekeepingReport,
+} from "./lib/housekeeping.js";
 import {
   TOOL_DESCRIPTIONS,
   createMemoryOps,
@@ -18,6 +25,7 @@ import {
   COMPACTION_CONTEXT,
   defaultDbPath,
   defaultScope,
+  parseHousekeepingConfig,
   SYSTEM_GUIDANCE,
   type PluginOptions,
 } from "./options.js";
@@ -123,6 +131,33 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
   const reflection = parseReflectionConfig(options?.reflection);
   const inventoryDir = input.directory ?? input.worktree ?? process.cwd();
 
+  // Conservative automatic housekeeping: once at boot, then daily. A missing store
+  // has nothing to sweep and must not be created for the sweep's sake; a failed
+  // sweep (locked db, full disk) is environmental and must not break the host.
+  const housekeeping = parseHousekeepingConfig(options);
+  const runHousekeeping = (): HousekeepingReport | null => {
+    if (disposed || !housekeeping.enabled || !existsSync(dbPath)) {
+      return null;
+    }
+    try {
+      return sweepHousekeeping(getDb(), {
+        scope: projectScope,
+        ttlMs: housekeeping.ttlMs,
+        now: Date.now(),
+      });
+    } catch {
+      return null;
+    }
+  };
+  runHousekeeping();
+  let sweepTimer: ReturnType<typeof setInterval> | undefined;
+  if (housekeeping.enabled) {
+    sweepTimer = setInterval(runHousekeeping, HOUSEKEEPING_INTERVAL_MS);
+    if (typeof sweepTimer.unref === "function") {
+      sweepTimer.unref();
+    }
+  }
+
   const hooks: Hooks = {
     tool: {
       memory_save: tool({
@@ -221,6 +256,22 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
         execute: async (args) => ops.restore(args),
       }),
 
+      memory_sweep: tool({
+        description: TOOL_DESCRIPTIONS.sweep,
+        args: {
+          scope: tool.schema
+            .string()
+            .optional()
+            .describe("Scope key; defaults to this session's worktree"),
+          ttl_days: tool.schema
+            .number()
+            .optional()
+            .describe("Override the dated-rule staleness TTL in days (default 7)"),
+        },
+        execute: async (args, context) =>
+          ops.sweep(args, defaultScope(args.scope ?? context.worktree ?? context.directory)),
+      }),
+
       memory_export: tool({
         description: TOOL_DESCRIPTIONS.exportEntries,
         args: {
@@ -296,6 +347,10 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
     },
     dispose: async () => {
       disposed = true;
+      if (sweepTimer !== undefined) {
+        clearInterval(sweepTimer);
+        sweepTimer = undefined;
+      }
       injected.reset();
       db?.close();
       db = null;
