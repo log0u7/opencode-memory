@@ -4,8 +4,10 @@ import { databaseSizeBytes, type MemoryDb } from "./db.js";
 import { isEntryFresh } from "./git.js";
 import { exportPortable, importPortable, resolvePortablePath } from "./portable.js";
 import {
+  endorseEntry,
   forget,
   HOT_THRESHOLD,
+  LessonBudgetError,
   list,
   neverRecalled,
   oldestCreated,
@@ -39,11 +41,15 @@ export type SaveArgs = {
   /** Id of the entry this one replaces: the old row is kept as a superseded
    * tombstone instead of stacking a near-duplicate. */
   supersedes?: string | undefined;
+  /** Publish without peer endorsement: the author vouches, and the save records the
+   * author's own endorsement in `endorsed_by`. */
+  shareable?: boolean | undefined;
 };
 export type SearchArgs = { query: string; limit?: number | undefined };
 export type ListArgs = { limit?: number | undefined };
 export type ForgetArgs = { id?: string | undefined; query?: string | undefined };
 export type RestoreArgs = { id: string };
+export type EndorseArgs = { id: string; endorser?: string | undefined };
 export type ExportArgs = { scope?: string | undefined; path?: string | undefined };
 export type ImportArgs = { path?: string | undefined };
 export type SweepArgs = { scope?: string | undefined; ttl_days?: number | undefined };
@@ -57,6 +63,7 @@ export type MemoryOps = {
   forget: (args: ForgetArgs, scope: string) => string;
   stats: (scope: string) => string;
   restore: (args: RestoreArgs) => string;
+  endorse: (args: EndorseArgs, contextAgent?: string) => string;
   exportEntries: (args: ExportArgs, scope: string) => string;
   importEntries: (args: ImportArgs, scope: string) => string;
   sweep: (args: SweepArgs, scope: string, options?: { directory?: string }) => string;
@@ -64,23 +71,30 @@ export type MemoryOps = {
 
 export function createMemoryOps(
   getDb: () => MemoryDb,
-  options: { onLessonSaved?: () => void } = {},
+  options: { onLessonSaved?: () => void; lessonBudgetPerDay?: number } = {},
 ): MemoryOps {
   return {
     save: (args, scope, source) =>
       run(() => {
-        const { entry, created, superseded } = saveEntry(getDb(), {
-          scope,
-          kind: args.kind,
-          title: args.title,
-          body: args.body,
-          tags: args.tags ?? [],
-          expires_at: args.expires_at ?? null,
-          ...(source !== undefined ? { source } : {}),
-          ...(args.paths !== undefined ? { paths: args.paths } : {}),
-          ...(args.commit_sha !== undefined ? { commit_sha: args.commit_sha } : {}),
-          ...(args.supersedes !== undefined ? { supersedes: args.supersedes } : {}),
-        });
+        const { entry, created, superseded } = saveEntry(
+          getDb(),
+          {
+            scope,
+            kind: args.kind,
+            title: args.title,
+            body: args.body,
+            tags: args.tags ?? [],
+            expires_at: args.expires_at ?? null,
+            ...(source !== undefined ? { source } : {}),
+            ...(args.paths !== undefined ? { paths: args.paths } : {}),
+            ...(args.commit_sha !== undefined ? { commit_sha: args.commit_sha } : {}),
+            ...(args.supersedes !== undefined ? { supersedes: args.supersedes } : {}),
+            ...(args.shareable !== undefined ? { shareable: args.shareable } : {}),
+          },
+          options.lessonBudgetPerDay !== undefined
+            ? { lessonBudgetPerDay: options.lessonBudgetPerDay }
+            : {},
+        );
         // A lesson save (or any row that reached hot) is new priority knowledge:
         // dropping the once-per-session injection cache makes the next turn
         // re-inject the inventory with the hot entry up front.
@@ -183,6 +197,23 @@ export function createMemoryOps(
           ? "no entry with that id"
           : `restored ${JSON.stringify(entry.title)} (${entry.id})`;
       }),
+    endorse: (args, contextAgent) =>
+      run(() => {
+        const endorser = args.endorser ?? contextAgent;
+        if (endorser === undefined || endorser.trim().length === 0) {
+          return "error: endorser required (no agent in this context)";
+        }
+        const result = endorseEntry(getDb(), { id: args.id, endorser });
+        if (result === null) {
+          return "error: entry not found";
+        }
+        if (!result.created) {
+          return "error: already endorsed by you";
+        }
+        return result.shareable
+          ? `endorsed ${args.id} (shareable)`
+          : `endorsed ${args.id} (not shareable: the endorser is the author)`;
+      }),
     exportEntries: (args, scope) =>
       run(() => {
         const filePath = resolvePortablePath(args.path, scope);
@@ -278,6 +309,8 @@ export const TOOL_DESCRIPTIONS = {
     "Count memory entries by kind for this project (plus global entries), with a total. Use it to see how much memory already exists, for example how many lessons reflection has written. The result also names never-recalled entries (stored 30+ days, never served to the model): a purge proposal only, forget the ones you no longer need with memory_forget.",
   restore:
     "Put a trashed entry back, by id. Deletes are recoverable: memory_forget reports the ids it trashed, and memory_restore brings one of them back. An entry stays restorable for 30 days.",
+  endorse:
+    "Mark an entry as worth sharing across hosts — one endorsement from an agent other than the author makes it shareable.",
   exportEntries:
     "Export memory entries for a scope to a portable JSONL file (default .opencode/memory/memory-export.jsonl in the project). The file is versionable in git and shareable across machines; credential-like content is never exported.",
   importEntries:
@@ -402,6 +435,12 @@ function run(fn: () => string): string {
   } catch (error) {
     if (error instanceof SecretDetectedError) {
       return "refused: the content looks like a credential; secrets must never be stored in memory";
+    }
+    if (error instanceof LessonBudgetError) {
+      return (
+        `refused: ${error.message}; improve an existing lesson (re-save with the same title) ` +
+        "instead of stacking a new one"
+      );
     }
     if (error instanceof Error) {
       return `error: ${error.message}`;

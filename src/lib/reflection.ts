@@ -13,6 +13,48 @@ export type ReflectionConfig = {
   timeoutMs: number;
 };
 
+/** The inference-only reflection loop: a standing directive (the current model distills
+ * lessons itself, no separate call) plus a per-day budget on fresh lesson saves. On by
+ * default; `reflection: false` — or an object config without `enabled: true` — switches
+ * the loop off, and an object config's `maxLessons` doubles as the daily budget. */
+export type ReflectionActivation = {
+  enabled: boolean;
+  maxPerDay: number;
+};
+
+export function parseReflectionActivation(raw: unknown): ReflectionActivation {
+  if (raw === false) {
+    return { enabled: false, maxPerDay: MAX_LESSONS_DEFAULT };
+  }
+  if (raw !== null && typeof raw === "object") {
+    if ((raw as { enabled?: unknown }).enabled !== true) {
+      return { enabled: false, maxPerDay: MAX_LESSONS_DEFAULT };
+    }
+    return {
+      enabled: true,
+      maxPerDay: clamp(
+        (raw as { maxLessons?: unknown }).maxLessons,
+        1,
+        MAX_LESSONS_CAP,
+        MAX_LESSONS_DEFAULT,
+      ),
+    };
+  }
+  return { enabled: true, maxPerDay: MAX_LESSONS_DEFAULT };
+}
+
+/** The trigger injected next to the standing memory guidance: the agent distills the
+ * lesson itself — the current model holds the correction's context, so no separate
+ * model call is needed. */
+export function reflectionGuidance(maxPerDay: number): string {
+  return (
+    "Reflect in-context when corrected or when an approach fails: distill the lesson yourself — " +
+    "(1) the error, (2) the rule that prevents it — and save it with " +
+    "memory_save(kind=lesson, paths=[the files involved]). " +
+    `At most ${maxPerDay} new lessons per day per project; refine an existing lesson (same title) instead of stacking a new one.`
+  );
+}
+
 export type ReflectionDeps = {
   isSubagent: (sessionID: string) => Promise<boolean>;
   transcript: (sessionID: string) => Promise<string>;

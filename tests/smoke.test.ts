@@ -33,6 +33,7 @@ describe("smoke: plugin module", () => {
       "tool",
     ]);
     expect(Object.keys(hooks.tool ?? {}).sort()).toEqual([
+      "memory_endorse",
       "memory_export",
       "memory_forget",
       "memory_import",

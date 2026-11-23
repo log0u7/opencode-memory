@@ -17,7 +17,9 @@ import {
 } from "./lib/memory-ops.js";
 import { currentCommitHash } from "./lib/git.js";
 import {
+  parseReflectionActivation,
   parseReflectionConfig,
+  reflectionGuidance,
   type ReflectionConfig,
   createReflection,
 } from "./lib/reflection.js";
@@ -125,10 +127,19 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
     return db;
   };
   const injected = oncePerSession();
-  const ops = createMemoryOps(getDb, { onLessonSaved: () => injected.reset() });
+  // The inference-only reflection loop: the standing directive plus a per-day lesson
+  // budget (the deep-reflection config's maxLessons doubles as the budget).
+  const reflectionLoop = parseReflectionActivation(options?.reflection);
+  const ops = createMemoryOps(getDb, {
+    onLessonSaved: () => injected.reset(),
+    ...(reflectionLoop.enabled ? { lessonBudgetPerDay: reflectionLoop.maxPerDay } : {}),
+  });
   // Request and compaction hooks carry no directory: the instance scope is the project.
   const projectScope = defaultScope(input.worktree, input.directory);
   const reflection = parseReflectionConfig(options?.reflection);
+  const guidance = reflectionLoop.enabled
+    ? `${SYSTEM_GUIDANCE}\n${reflectionGuidance(reflectionLoop.maxPerDay)}`
+    : SYSTEM_GUIDANCE;
   const inventoryDir = input.directory ?? input.worktree ?? process.cwd();
 
   // Conservative automatic housekeeping: once at boot, then daily. A missing store
@@ -182,6 +193,12 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
               "Files the entry documents (relative project paths): the entry is stale when any of them changes",
             ),
           supersedes: tool.schema.string().optional().describe("Id of the entry this one replaces"),
+          shareable: tool.schema
+            .boolean()
+            .optional()
+            .describe(
+              "Publish without peer endorsement: the author vouches for the entry (default false)",
+            ),
         },
         execute: async (args, context) =>
           ops.save(
@@ -257,6 +274,18 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
         execute: async (args) => ops.restore(args),
       }),
 
+      memory_endorse: tool({
+        description: TOOL_DESCRIPTIONS.endorse,
+        args: {
+          id: tool.schema.string().describe("Entry id to endorse"),
+          endorser: tool.schema
+            .string()
+            .optional()
+            .describe("Endorsing agent; defaults to the calling agent"),
+        },
+        execute: async (args, context) => ops.endorse(args, context.agent),
+      }),
+
       memory_sweep: tool({
         description: TOOL_DESCRIPTIONS.sweep,
         args: {
@@ -327,7 +356,7 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
   return {
     ...hooks,
     "experimental.chat.system.transform": async (input, output) => {
-      output.system.push(SYSTEM_GUIDANCE);
+      output.system.push(guidance);
       if (disposed) {
         return;
       }

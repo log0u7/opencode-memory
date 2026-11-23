@@ -60,6 +60,15 @@ export class SecretDetectedError extends Error {
   }
 }
 
+/** Raised when a fresh lesson insert crosses the caller's per-day budget. Re-saves of an
+ * existing title never hit it, so refining knowledge stays possible on a full budget. */
+export class LessonBudgetError extends Error {
+  constructor(readonly maxPerDay: number) {
+    super(`daily lesson budget reached (${maxPerDay}/day for this project)`);
+    this.name = "LessonBudgetError";
+  }
+}
+
 /**
  * One canonical scope string for one location. Callers hand in a worktree, a
  * directory, or both, so an entry written by either plugin entry point is found
@@ -188,7 +197,7 @@ export function save(db: MemoryDb, input: EntryInput, options: { now?: number } 
 export function saveEntry(
   db: MemoryDb,
   input: EntryInput,
-  options: { now?: number } = {},
+  options: { now?: number; lessonBudgetPerDay?: number } = {},
 ): SaveResult {
   validateEntry(input);
   const scope = canonicalScope(input.scope);
@@ -229,8 +238,8 @@ export function saveEntry(
   // data loss. Upgrade path: a normalized key column plus BEGIN IMMEDIATE.
   const existing =
     input.supersedes === undefined
-      ? db.conn.get<{ id: string; created_at: number; heat: number }>(
-          `SELECT id, created_at, heat FROM entries WHERE scope = ? AND lower(trim(title)) = ? AND status = 'current' AND ${LIVE}`,
+      ? db.conn.get<{ id: string; created_at: number; heat: number; endorsed_by: string | null }>(
+          `SELECT id, created_at, heat, endorsed_by FROM entries WHERE scope = ? AND lower(trim(title)) = ? AND status = 'current' AND ${LIVE}`,
           [scope, input.title.trim().toLowerCase()],
         )
       : null;
@@ -239,8 +248,11 @@ export function saveEntry(
     // Re-recording a lesson is the recurrence signal: every rewrite of a lesson
     // row heats it up by one. Other kinds leave the counter untouched.
     const heat = existing.heat + (input.kind === "lesson" ? 1 : 0);
+    // A shareable re-save records the author's endorsement; existing endorsements
+    // (author or peers) are never dropped by a rewrite.
+    const endorsers = mergeEndorsement(parseStringArray(existing.endorsed_by ?? "[]"), input);
     db.conn.run(
-      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ?, source = ?, paths = ?, commit_sha = ?, heat = ? WHERE id = ?",
+      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ?, source = ?, paths = ?, commit_sha = ?, heat = ?, endorsed_by = ? WHERE id = ?",
       [
         input.kind,
         input.body,
@@ -251,6 +263,7 @@ export function saveEntry(
         JSON.stringify(input.paths ?? []),
         input.commit_sha ?? null,
         heat,
+        endorsers.length > 0 ? JSON.stringify(endorsers) : null,
         existing.id,
       ],
     );
@@ -268,6 +281,7 @@ export function saveEntry(
         ...(input.source !== undefined ? { source: input.source } : {}),
         ...(input.paths !== undefined ? { paths: input.paths } : {}),
         ...(input.commit_sha !== undefined ? { commit_sha: input.commit_sha } : {}),
+        ...(endorsers.length > 0 ? { endorsed_by: endorsers } : {}),
         ...(heat > 0 ? { heat } : {}),
         status: "current",
       },
@@ -275,12 +289,24 @@ export function saveEntry(
     };
   }
 
+  // The anti-spam budget of the reflection loop gates fresh lessons only: a full
+  // budget still lets the caller refine an existing lesson under the same title.
+  if (
+    input.kind === "lesson" &&
+    options.lessonBudgetPerDay !== undefined &&
+    countLessonsCreatedSince(db, scope, utcDayStart(now)) >= options.lessonBudgetPerDay
+  ) {
+    throw new LessonBudgetError(options.lessonBudgetPerDay);
+  }
+
   const id = randomUUID();
   // A brand-new lesson starts hot-adjacent (heat 1): the first re-record tips it
   // over HOT_THRESHOLD. Other kinds start at the column default, 0.
   const heat = input.kind === "lesson" ? 1 : 0;
+  // Author-published entries (shareable at save) carry the author's endorsement.
+  const endorsers = mergeEndorsement([], input);
   db.conn.run(
-    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, supersedes, status, superseded_at, heat) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, supersedes, status, superseded_at, heat, endorsed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       id,
       scope,
@@ -298,6 +324,7 @@ export function saveEntry(
       "current",
       null,
       heat,
+      endorsers.length > 0 ? JSON.stringify(endorsers) : null,
     ],
   );
 
@@ -315,6 +342,7 @@ export function saveEntry(
       ...(input.source !== undefined ? { source: input.source } : {}),
       ...(input.paths !== undefined ? { paths: input.paths } : {}),
       ...(input.commit_sha !== undefined ? { commit_sha: input.commit_sha } : {}),
+      ...(endorsers.length > 0 ? { endorsed_by: endorsers } : {}),
       ...(heat > 0 ? { heat } : {}),
       ...(input.supersedes !== undefined ? { supersedes: input.supersedes } : {}),
       status: "current",
@@ -322,6 +350,67 @@ export function saveEntry(
     created: true,
     ...(supersededId !== undefined ? { superseded: supersededId } : {}),
   };
+}
+
+/** The entry's endorsers plus the author's own when the save publishes it. */
+function mergeEndorsement(endorsers: string[], input: EntryInput): string[] {
+  if (input.shareable !== true || input.source === undefined || endorsers.includes(input.source)) {
+    return endorsers;
+  }
+  return [...endorsers, input.source];
+}
+
+/** Local midnight (UTC) of `ms`: the day window of the reflection lesson budget. */
+function utcDayStart(ms: number): number {
+  const date = new Date(ms);
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+}
+
+/** Fresh lessons saved in one scope since `since`, every status: the reflection budget
+ * counts the day's writes, not the rows that survived later cleanups. */
+export function countLessonsCreatedSince(db: MemoryDb, scope: string, since: number): number {
+  return (
+    db.conn.get<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM entries WHERE kind = 'lesson' AND scope = ? AND created_at >= ?",
+      [canonicalScope(scope), since],
+    )?.n ?? 0
+  );
+}
+
+/**
+ * One endorsement appended to the entry's `endorsed_by`. Idempotent per endorser, and
+ * the endorsement is the share signal: any endorser other than the entry's author makes
+ * it shareable. `null` when the id is not a live current row; `created` is false when
+ * this endorser had already endorsed.
+ */
+export function endorseEntry(
+  db: MemoryDb,
+  target: { id: string; endorser: string },
+): { entry: Entry; created: boolean; shareable: boolean } | null {
+  const row = db.conn.get<Row>(
+    `SELECT * FROM entries WHERE id = ? AND status = 'current' AND ${LIVE}`,
+    [target.id],
+  );
+  if (row === null) {
+    return null;
+  }
+  const endorsers = parseStringArray(row.endorsed_by ?? "[]");
+  const created = !endorsers.includes(target.endorser);
+  if (created) {
+    endorsers.push(target.endorser);
+    db.conn.run("UPDATE entries SET endorsed_by = ? WHERE id = ?", [
+      JSON.stringify(endorsers),
+      target.id,
+    ]);
+  }
+  const entry = rowToEntry({ ...row, endorsed_by: JSON.stringify(endorsers) });
+  return { entry, created, shareable: isShareable(entry) };
+}
+
+/** An entry is worth sharing once someone other than its author vouched for it; the
+ * author's own endorsement (the shareable-at-save marker) never qualifies alone. */
+export function isShareable(entry: Entry): boolean {
+  return (entry.endorsed_by ?? []).some((endorser) => endorser !== entry.source);
 }
 
 /**
@@ -618,20 +707,25 @@ function trashedByQuery(db: MemoryDb, target: { query: string; scope: string }):
   );
 }
 
-type Row = Omit<Entry, "tags" | "source"> & {
+type Row = Omit<Entry, "tags" | "source" | "endorsed_by"> & {
   tags: string;
   source: string | null;
+  endorsed_by: string | null;
   deleted_at: number | null;
 };
 
 function rowToEntry(row: Row): Entry {
+  const endorsers =
+    row.endorsed_by === null || row.endorsed_by === undefined
+      ? []
+      : parseStringArray(row.endorsed_by);
   return {
     id: row.id,
     scope: row.scope,
     kind: row.kind,
     title: row.title,
     body: row.body,
-    tags: parseTags(row.tags),
+    tags: parseStringArray(row.tags),
     created_at: row.created_at,
     updated_at: row.updated_at,
     expires_at: row.expires_at,
@@ -650,10 +744,13 @@ function rowToEntry(row: Row): Entry {
       ? { superseded_at: row.superseded_at }
       : {}),
     ...(row.heat !== null && row.heat !== undefined && row.heat > 0 ? { heat: row.heat } : {}),
+    ...(endorsers.length > 0 ? { endorsed_by: endorsers } : {}),
   };
 }
 
-function parseTags(raw: string): string[] {
+/** JSON array column decoded leniently: a malformed or non-string payload reads as
+ * empty instead of crashing a read. */
+function parseStringArray(raw: string): string[] {
   try {
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === "string") : [];

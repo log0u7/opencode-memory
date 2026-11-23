@@ -246,6 +246,7 @@ describe("opencode-memory v2 setup", () => {
     const cleanup = await pluginModule.setup(ctx);
     const names = added.map((t) => t.name).sort();
     expect(names).toEqual([
+      "memory_endorse",
       "memory_export",
       "memory_forget",
       "memory_import",

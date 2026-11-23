@@ -106,6 +106,7 @@ describe("memory plugin tools", () => {
   it("registers the memory tools", async () => {
     const tools = await loadTools({ dbPath: join(dir, "m.db") });
     expect(Object.keys(tools).sort()).toEqual([
+      "memory_endorse",
       "memory_export",
       "memory_forget",
       "memory_import",

@@ -17,6 +17,7 @@ import {
 } from "./lib/memory-ops.js";
 import { currentCommitHash } from "./lib/git.js";
 import { createReflection, parseReflectionConfig } from "./lib/reflection.js";
+import { parseReflectionActivation, reflectionGuidance } from "./lib/reflection.js";
 import {
   SYSTEM_GUIDANCE,
   COMPACTION_CONTEXT,
@@ -89,7 +90,16 @@ export const MemoryV2 = Plugin.define({
       return db;
     };
     const injected = oncePerSession();
-    const ops = createMemoryOps(getDb, { onLessonSaved: () => injected.reset() });
+    // The inference-only reflection loop: the standing directive plus a per-day lesson
+    // budget (the deep-reflection config's maxLessons doubles as the budget).
+    const reflectionLoop = parseReflectionActivation(options.reflection);
+    const guidance = reflectionLoop.enabled
+      ? `${SYSTEM_GUIDANCE}\n${reflectionGuidance(reflectionLoop.maxPerDay)}`
+      : SYSTEM_GUIDANCE;
+    const ops = createMemoryOps(getDb, {
+      onLessonSaved: () => injected.reset(),
+      ...(reflectionLoop.enabled ? { lessonBudgetPerDay: reflectionLoop.maxPerDay } : {}),
+    });
 
     // Request and compaction hooks carry no directory: the instance scope is the project.
     const projectScope = defaultScope(undefined, ctx.location.directory);
@@ -250,6 +260,11 @@ export const MemoryV2 = Plugin.define({
               type: "string",
               description: "Id of the entry this one replaces",
             },
+            shareable: {
+              type: "boolean",
+              description:
+                "Publish without peer endorsement: the author vouches for the entry (default false)",
+            },
           },
           required: ["kind", "title", "body"],
           additionalProperties: false,
@@ -264,6 +279,7 @@ export const MemoryV2 = Plugin.define({
             expires_at?: number;
             paths?: string[];
             supersedes?: string;
+            shareable?: boolean;
           };
           return {
             content: ops.save(
@@ -424,6 +440,29 @@ export const MemoryV2 = Plugin.define({
               a,
               defaultScope(undefined, a.scope ?? ctx.location.directory),
             ),
+          };
+        },
+      });
+
+      editor.add({
+        name: "memory_endorse",
+        description: TOOL_DESCRIPTIONS.endorse,
+        input: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Entry id to endorse" },
+            endorser: {
+              type: "string",
+              description: "Endorsing agent; defaults to the calling agent",
+            },
+          },
+          required: ["id"],
+          additionalProperties: false,
+        },
+        async execute(args, context) {
+          const a = args as { id: string; endorser?: string };
+          return {
+            content: ops.endorse({ id: a.id, endorser: a.endorser ?? context.agent }),
           };
         },
       });
@@ -737,7 +776,7 @@ export const MemoryV2 = Plugin.define({
     // The v1 system transform maps to the v2 context hook: guidance first, then the
     // once-per-session inventory (stale anchored entries filtered out).
     await ctx.session.hook("context", (event) => {
-      event.system.push(textPart(SYSTEM_GUIDANCE));
+      event.system.push(textPart(guidance));
       if (disposed) {
         return;
       }
