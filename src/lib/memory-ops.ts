@@ -52,7 +52,12 @@ export type GetArgs = { id: string };
 export type ForgetArgs = { id?: string | undefined; query?: string | undefined };
 export type RestoreArgs = { id: string };
 export type EndorseArgs = { id: string; endorser?: string | undefined };
-export type ExportArgs = { scope?: string | undefined; path?: string | undefined };
+export type ExportArgs = {
+  scope?: string | undefined;
+  path?: string | undefined;
+  /** Export only entries worth sharing cross-host: at least one endorsement. */
+  shareable?: boolean | undefined;
+};
 export type ImportArgs = { path?: string | undefined };
 export type SweepArgs = { scope?: string | undefined; ttl_days?: number | undefined };
 
@@ -233,14 +238,17 @@ export function createMemoryOps(
     exportEntries: (args, scope) =>
       run(() => {
         const filePath = resolvePortablePath(args.path, scope);
-        const count = exportPortable(getDb(), scope, filePath);
-        return `exported ${count} entries to ${filePath}`;
+        const shareable = args.shareable === true;
+        const count = exportPortable(getDb(), scope, filePath, shareable ? { shareable } : {});
+        return shareable
+          ? `exported ${count} shareable entries to ${filePath}`
+          : `exported ${count} entries to ${filePath}`;
       }),
     importEntries: (args, scope) =>
       run(() => {
         const filePath = resolvePortablePath(args.path, scope);
-        const count = importPortable(getDb(), filePath);
-        return `imported ${count} entries from ${filePath}`;
+        const result = importPortable(getDb(), filePath);
+        return `imported ${result.imported} entries (${result.skipped} skipped) from ${filePath}`;
       }),
     sweep: (args, scope, options = {}) =>
       run(() => {
@@ -329,9 +337,9 @@ export const TOOL_DESCRIPTIONS = {
   endorse:
     "Mark an entry as worth sharing across hosts — one endorsement from an agent other than the author makes it shareable.",
   exportEntries:
-    "Export memory entries for a scope to a portable JSONL file (default .opencode/memory/memory-export.jsonl in the project). The file is versionable in git and shareable across machines; credential-like content is never exported.",
+    "Export memory entries for a scope to a portable JSONL file (default .opencode/memory/memory-export.jsonl in the project). The file is versionable in git and shareable across machines; credential-like content is never exported. With shareable=true, export only the entries worth sharing cross-host: those carrying at least one endorsement (a peer's, or the author's own when the save published them with shareable).",
   importEntries:
-    "Import memory entries from a portable JSONL file (default .opencode/memory/memory-export.jsonl). Idempotent: entries whose id already exists are skipped, secrets are rejected, and the import never supersedes local entries (a supersedes link pointing outside the file is dropped).",
+    "Import memory entries from a portable JSONL file (default .opencode/memory/memory-export.jsonl). Idempotent: entries whose id already exists are skipped, secrets are rejected, and the import never supersedes local entries (a supersedes link pointing outside the file is dropped). The report names how many entries were imported and how many were skipped.",
   sweep:
     "Run the conservative housekeeping sweep now (it also runs automatically at plugin boot and every 24h): entries carrying a dated-state marker (ISO dates, 'état:', 'state as of', 'pending', 'ETA'...) that were not updated within the TTL are tombstoned (recoverable via memory_restore for 30 days), and exact duplicates of a scope (same normalized title and body, same anchoring) are removed keeping the newest copy. Lessons, epic/task entries are protected; anchored entries are left to the anchoring rule.",
 } as const;

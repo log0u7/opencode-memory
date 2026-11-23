@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-23
+
+### Added
+
+- **Shareable export filter**: `memory_export` accepts `shareable: true` and writes only
+  the entries worth sharing cross-host — those carrying at least one endorsement (a
+  peer's, or the author's own when the save published them with `shareable`). The JSONL
+  format itself is unchanged (0.13.0), the filter only selects which entries travel.
+- **Import report counts**: `memory_import` now reports how many entries were imported
+  and how many valid lines were skipped (ids already present, rejects, orphan superseded
+  rows): `imported N entries (M skipped) from <path>`.
+- **Mesh inbox import pass (sync-import)**: the housekeeping pass (plugin boot + every
+  24h, both entry points) now also imports the JSONL files the opencode-mesh plugin
+  collects from paired hosts under `<mesh dataDir>/memory-sync/inbox/*.jsonl`, then
+  renames each to `<name>.jsonl.imported`. The path convention is the only coupling
+  between the two plugins (transport and content stay decoupled); a missing inbox is an
+  empty one, a broken file stays in place for the next pass, and per-entry idempotence
+  makes a re-import a no-op. A store must already exist (the boot guard is unchanged).
+
 ## [0.18.0] - 2026-11-23
 
 ### Added

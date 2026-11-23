@@ -16,6 +16,7 @@ import {
   oncePerSession,
 } from "./lib/memory-ops.js";
 import { currentCommitHash } from "./lib/git.js";
+import { defaultMeshInboxDir, syncImport } from "./lib/sync.js";
 import {
   parseReflectionActivation,
   parseReflectionConfig,
@@ -151,12 +152,16 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
       return null;
     }
     try {
-      return sweepHousekeeping(getDb(), {
+      const report = sweepHousekeeping(getDb(), {
         scope: projectScope,
         ttlMs: housekeeping.ttlMs,
         now: Date.now(),
         directory: inventoryDir,
       });
+      // The mesh inbox pass rides the same cadence: entries pushed by paired hosts
+      // since the last sweep are imported here, by the path convention in lib/sync.ts.
+      syncImport(getDb(), { inboxDir: defaultMeshInboxDir() });
+      return report;
     } catch {
       return null;
     }
@@ -324,6 +329,12 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
             .optional()
             .describe(
               "JSONL file path; default .opencode/memory/memory-export.jsonl in the project",
+            ),
+          shareable: tool.schema
+            .boolean()
+            .optional()
+            .describe(
+              "Export only entries worth sharing cross-host: those carrying at least one endorsement",
             ),
         },
         execute: async (args, context) =>
