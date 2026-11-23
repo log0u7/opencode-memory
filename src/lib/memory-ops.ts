@@ -15,6 +15,7 @@ import {
   stats,
   suggestReplacements,
 } from "./store.js";
+import { sweepHousekeeping, type HousekeepingReport } from "./housekeeping.js";
 import type { Entry } from "../types/entry.js";
 
 // Optional properties accept undefined explicitly: the two SDK dialects hand raw
@@ -42,6 +43,7 @@ export type ForgetArgs = { id?: string | undefined; query?: string | undefined }
 export type RestoreArgs = { id: string };
 export type ExportArgs = { scope?: string | undefined; path?: string | undefined };
 export type ImportArgs = { path?: string | undefined };
+export type SweepArgs = { scope?: string | undefined; ttl_days?: number | undefined };
 
 /** One shared behaviour behind both plugin entry points. Every operation returns the
  * model-facing text directly, so a caller cannot bypass caps or error handling. */
@@ -54,6 +56,7 @@ export type MemoryOps = {
   restore: (args: RestoreArgs) => string;
   exportEntries: (args: ExportArgs, scope: string) => string;
   importEntries: (args: ImportArgs, scope: string) => string;
+  sweep: (args: SweepArgs, scope: string) => string;
 };
 
 export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
@@ -164,7 +167,43 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
         const count = importPortable(getDb(), filePath);
         return `imported ${count} entries from ${filePath}`;
       }),
+    sweep: (args, scope) =>
+      run(() => {
+        // A non-positive ttl_days would sweep fresh entries; it falls back to the default.
+        const days =
+          typeof args.ttl_days === "number" && Number.isFinite(args.ttl_days) && args.ttl_days > 0
+            ? Math.floor(args.ttl_days)
+            : undefined;
+        const report = sweepHousekeeping(getDb(), {
+          scope,
+          ...(days !== undefined ? { ttlMs: days * DAY_MS } : {}),
+        });
+        return renderSweep(report);
+      }),
   };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function renderSweep(report: HousekeepingReport): string {
+  let text =
+    `swept: ${report.tombstoned.length} tombstoned (dated), ` +
+    `${report.deleted.length} deleted (duplicate), ${report.kept} kept`;
+  for (const [label, rows] of [
+    ["tombstoned", report.tombstoned],
+    ["deleted", report.deleted],
+  ] as const) {
+    if (rows.length === 0) {
+      continue;
+    }
+    // Tombstones stay restorable and deletions stay reviewable: name what moved.
+    const listed = rows
+      .slice(0, REMOVED_REPORT_MAX)
+      .map((row) => `${JSON.stringify(row.title)} (${row.id}) [${row.rule}]`);
+    const rest = rows.length - REMOVED_REPORT_MAX;
+    text += `\n${label}: ${rest > 0 ? `${listed.join(", ")}, and ${rest} more` : listed.join(", ")}`;
+  }
+  return text;
 }
 
 /** How many removed entries a delete report names before it summarizes the rest, so a
@@ -209,6 +248,8 @@ export const TOOL_DESCRIPTIONS = {
     "Export memory entries for a scope to a portable JSONL file (default .opencode/memory/memory-export.jsonl in the project). The file is versionable in git and shareable across machines; credential-like content is never exported.",
   importEntries:
     "Import memory entries from a portable JSONL file (default .opencode/memory/memory-export.jsonl). Idempotent: entries whose id already exists are skipped, secrets are rejected, and the import never supersedes local entries (a supersedes link pointing outside the file is dropped).",
+  sweep:
+    "Run the conservative housekeeping sweep now (it also runs automatically at plugin boot and every 24h): entries carrying a dated-state marker (ISO dates, 'état:', 'state as of', 'pending', 'ETA'...) that were not updated within the TTL are tombstoned (recoverable via memory_restore for 30 days), and exact duplicates of a scope (same normalized title and body, same anchoring) are removed keeping the newest copy. Lessons, epic/task entries are protected; anchored entries are left to the anchoring rule.",
 } as const;
 
 /**

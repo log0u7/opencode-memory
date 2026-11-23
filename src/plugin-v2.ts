@@ -5,6 +5,11 @@ import { Plugin } from "@opencode/plugin";
 import { openMemoryDb, type MemoryDb } from "./lib/db.js";
 import { databaseSizeBytes } from "./lib/db.js";
 import {
+  HOUSEKEEPING_INTERVAL_MS,
+  sweepHousekeeping,
+  type HousekeepingReport,
+} from "./lib/housekeeping.js";
+import {
   TOOL_DESCRIPTIONS,
   createMemoryOps,
   memoryInventory,
@@ -17,6 +22,7 @@ import {
   COMPACTION_CONTEXT,
   defaultScope,
   defaultDbPath,
+  parseHousekeepingConfig,
   parseRetrievalConfig,
   type PluginOptions,
 } from "./options.js";
@@ -88,6 +94,33 @@ export const MemoryV2 = Plugin.define({
     const projectScope = defaultScope(undefined, ctx.location.directory);
     const retrieval = parseRetrievalConfig(options);
     const injected = oncePerSession();
+
+    // Conservative automatic housekeeping: once at boot, then daily. A missing
+    // store has nothing to sweep and must not be created for the sweep's sake; a
+    // failed sweep (locked db, full disk) is environmental and must not break setup.
+    const housekeeping = parseHousekeepingConfig(options);
+    const runHousekeeping = (): HousekeepingReport | null => {
+      if (disposed || !housekeeping.enabled || !existsSync(dbPath)) {
+        return null;
+      }
+      try {
+        return sweepHousekeeping(getDb(), {
+          scope: projectScope,
+          ttlMs: housekeeping.ttlMs,
+          now: Date.now(),
+        });
+      } catch {
+        return null;
+      }
+    };
+    runHousekeeping();
+    let sweepTimer: ReturnType<typeof setInterval> | undefined;
+    if (housekeeping.enabled) {
+      sweepTimer = setInterval(runHousekeeping, HOUSEKEEPING_INTERVAL_MS);
+      if (typeof sweepTimer.unref === "function") {
+        sweepTimer.unref();
+      }
+    }
 
     /** Scope that holds the transcript for `sessionID`: the project scope when the file is
      * already there, otherwise the session's own scope after an on-demand export (lazy, so
@@ -338,6 +371,28 @@ export const MemoryV2 = Plugin.define({
         async execute(args) {
           const a = args as { id: string };
           return { content: ops.restore(a) };
+        },
+      });
+
+      editor.add({
+        name: "memory_sweep",
+        description: TOOL_DESCRIPTIONS.sweep,
+        input: {
+          type: "object",
+          properties: {
+            scope: { type: "string", description: "Scope key; defaults to the project directory" },
+            ttl_days: {
+              type: "number",
+              description: "Override the dated-rule staleness TTL in days (default 7)",
+            },
+          },
+          additionalProperties: false,
+        },
+        async execute(args) {
+          const a = args as { scope?: string; ttl_days?: number };
+          return {
+            content: ops.sweep(a, defaultScope(undefined, a.scope ?? ctx.location.directory)),
+          };
         },
       });
 
@@ -792,6 +847,10 @@ export const MemoryV2 = Plugin.define({
 
     const cleanup = async () => {
       disposed = true;
+      if (sweepTimer !== undefined) {
+        clearInterval(sweepTimer);
+        sweepTimer = undefined;
+      }
       injected.reset();
       rpc.dispose();
       db?.close();

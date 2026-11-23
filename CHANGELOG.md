@@ -5,6 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-11-23
+
+### Added
+
+- **Automatic housekeeping** (conservative): at plugin boot and every 24 hours
+  the project scope (plus `global`) is swept. An entry whose content carries a
+  dated-state marker (ISO dates, `état:`, `état au`, `state as of`, `en cours`,
+  `en vol`, `attente`, `pending`, `ETA`) and has not been updated for 7 days is
+  tombstoned — it follows the standard 30-day trash and stays restorable
+  through `memory_restore`.
+- **Duplicate collapse**: two live entries of the same scope with the same
+  normalized title and body, and the same anchoring, collapse to the newest
+  copy; the older ones are deleted for good (an exact duplicate adds nothing
+  to the trash).
+- **Exemptions**: `lesson` entries are never dated-swept (an anchored lesson's
+  freshness is decided by the anchoring at read time), `epic`/`task` entries
+  (orchestrator steering) are exempt from both rules, and anchored entries
+  (paths + commit) are left to the anchoring.
+- **`memory_sweep` tool** (`scope?`, `ttl_days?`): runs the same sweep on
+  demand and reports what moved (`swept: N tombstoned (dated), M deleted
+  (duplicate), K kept`, with the moved entries named).
+- Options: `housekeeping` (default `true`) and `sweepTtlDays` (default `7`).
+
+### Notes
+
+- Inspired by workflow-guard's storage maintenance.
+
 ## [0.13.0] - 2026-11-23
 
 ### Added

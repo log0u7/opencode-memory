@@ -1,3 +1,4 @@
+import { DEFAULT_SWEEP_TTL_MS } from "./lib/housekeeping.js";
 import { canonicalScope } from "./lib/store.js";
 import { INLINE_OUTPUT_MAX_BYTES } from "./transcripts.js";
 
@@ -24,6 +25,10 @@ export type PluginOptions = {
   dbPath?: string;
   reflection?: unknown;
   retrieval?: RetrievalOptions;
+  /** Run the conservative housekeeping sweep at boot and every 24h. Default true. */
+  housekeeping?: boolean;
+  /** Age (in days) after which a dated entry becomes sweepable. Default 7. */
+  sweepTtlDays?: number;
 };
 
 export const SYSTEM_GUIDANCE = `You have persistent working memory shared with all OpenCode sessions on this machine.
@@ -104,4 +109,22 @@ export function parseRetrievalConfig(options?: PluginOptions): RetrievalConfig {
  */
 export function defaultScope(worktree?: string, directory?: string): string {
   return canonicalScope(worktree, directory);
+}
+
+export type HousekeepingConfig = {
+  enabled: boolean;
+  ttlMs: number;
+};
+
+/** Housekeeping is on by default and conservative: a sweepTtlDays of 0 or less
+ * falls back to the default rather than sweeping fresh entries immediately. */
+export function parseHousekeepingConfig(options?: PluginOptions): HousekeepingConfig {
+  const days = options?.sweepTtlDays;
+  return {
+    enabled: options?.housekeeping !== false,
+    ttlMs:
+      typeof days === "number" && Number.isFinite(days) && days > 0
+        ? Math.floor(days) * 24 * 60 * 60 * 1000
+        : DEFAULT_SWEEP_TTL_MS,
+  };
 }
