@@ -301,3 +301,76 @@ describe("syncExport", () => {
     }
   });
 });
+
+describe("housekeeping pass through ops.sweep", () => {
+  // 0.20.1: memory_sweep runs the SAME pass as the boot/daily cadence — sweep plus
+  // the mesh sync twins. Before, a manual sweep left the outbox empty until the
+  // next daily tick.
+
+  function meshDataHome(): string {
+    const dataHome = join(dir, "xdg-data");
+    mkdirSync(join(dataHome, "opencode-mesh"), { recursive: true });
+    return dataHome;
+  }
+
+  function withXdg<T>(dataHome: string, fn: () => T): T {
+    const previous = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = dataHome;
+    try {
+      return fn();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.XDG_DATA_HOME;
+      } else {
+        process.env.XDG_DATA_HOME = previous;
+      }
+    }
+  }
+
+  function peerLine(id: string, scope = "/w"): string {
+    return JSON.stringify({
+      id,
+      scope,
+      kind: "fact",
+      title: `from peer ${id}`,
+      body: "body",
+      tags: [],
+      created_at: 1000,
+      updated_at: 1000,
+      expires_at: null,
+      source: "peer-host",
+    });
+  }
+
+  it("a manual sweep exports shareable entries to the outbox", () => {
+    const dataHome = meshDataHome();
+    save({ source: "agent-a", shareable: true, title: "published by sweep" });
+    save({ title: "stays local" });
+    const ops = createMemoryOps(() => db);
+
+    const out = withXdg(dataHome, () => ops.sweep({}, "/w"));
+
+    expect(out).toContain("swept:");
+    const outboxFile = join(dataHome, "opencode-mesh", "memory-sync", "outbox", "shareable.jsonl");
+    const titles = readFileSync(outboxFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line).title);
+    expect(titles).toEqual(["published by sweep"]);
+  });
+
+  it("a manual sweep imports the mesh inbox files", () => {
+    const dataHome = meshDataHome();
+    const inbox = join(dataHome, "opencode-mesh", "memory-sync", "inbox");
+    mkdirSync(inbox, { recursive: true });
+    writeFileSync(join(inbox, "node-a.jsonl"), `${peerLine("p1")}\n${peerLine("p2")}\n`);
+    const ops = createMemoryOps(() => db);
+
+    withXdg(dataHome, () => ops.sweep({}, "/w"));
+
+    const ids = allLive(db, "/w").map((entry) => entry.id);
+    expect(ids).toContain("p1");
+    expect(ids).toContain("p2");
+    expect(readdirSync(inbox).sort()).toEqual(["node-a.jsonl.imported"]);
+  });
+});

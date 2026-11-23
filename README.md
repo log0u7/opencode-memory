@@ -47,7 +47,7 @@ sequenceDiagram
 - **Memory that outlives sessions.** One SQLite store (WAL mode, FTS5 BM25 ranking) shared by every session on the machine, scoped per project worktree plus a `global` scope. Recent entries are injected into the prompt automatically.
 - **The agent writes its own memory.** The system prompt nudges it to save durable decisions, facts, preferences and gotchas as they emerge; distilled lessons (`kind=lesson`) are injected first in later sessions, so known mistakes are not retried.
 - **Exact recall from past sessions.** `memory_session_search` greps exported transcripts for exact lines with context; `memory_session_read` reads a numbered window; `/memory-continue <sessionID>` brings a past session back into the current one.
-- **Optional LLM reflection.** On session idle, one bounded call distils at most `maxLessons` lessons from the transcript tail (~2k input tokens, ~$0.001 with a small model). Off by default.
+- **Optional LLM reflection.** On session idle, one bounded call distils lessons from the transcript tail (~2k input tokens, ~$0.001 with a small model). Off by default.
 - **Safe by default.** Secret-shaped strings are refused at write time; deletes go to a restorable trash; query deletes never cross scopes; tool results are size-capped; everything stays on the machine - no cloud, no API keys.
 
 ## Safety limits
@@ -102,7 +102,7 @@ memory_stats()
 | `memory_forget` | `id` or `query` | Trash one entry by id, or all matching a query. |
 | `memory_stats` | `scope?` | Count entries by kind (plus global) with a total, plus the store size and oldest entry. |
 | `memory_restore` | `id` | Put a trashed entry back, wherever it lived. |
-| `memory_sweep` | `scope?`, `ttl_days?` | Run the housekeeping sweep now: tombstone dated stale entries (recoverable 30 days) and delete exact duplicates, keeping the newest copy. |
+| `memory_sweep` | `scope?`, `ttl_days?` | Run the full housekeeping pass now: tombstone dated stale entries (recoverable 30 days), delete exact duplicates keeping the newest copy, and run the mesh sync (inbox import + shareable export to the outbox) - the same sequence as the automatic pass. |
 | `memory_session_search` | `query`, `sessionID?`, `contextLines?`, `maxBytes?` | Search exported session transcripts for exact lines (case-insensitive), with line numbers and surrounding context. |
 | `memory_session_read` | `sessionID`, `offset?`, `limit?`, `maxBytes?` | Read a numbered window of one exported transcript by 1-based line. |
 | `memory_transcript_list` | `all?`, `scope?` | List exported transcripts with size, age and last touch (storage visibility). |
@@ -116,7 +116,7 @@ Entry `kind` is free-form; conventions that work well: `decision`, `fact`, `pref
 
 ### Housekeeping
 
-The store is swept automatically so it stays readable: once at plugin boot and then every 24 hours, the project scope (plus `global`) gets a conservative pass, reported by `memory_sweep(scope?, ttl_days?)` on demand.
+The store is swept automatically so it stays readable: once at plugin boot and then every 24 hours, the project scope (plus `global`) gets a conservative pass. `memory_sweep(scope?, ttl_days?)` runs the exact same pass on demand: sweep, plus the mesh sync twins (inbox import, shareable export to the outbox), so a manual sweep never leaves the outbox waiting for the next daily tick.
 
 - **Dated entries**: an entry whose content carries a state marker (ISO dates, `état:`, `état au`, `state as of`, `en cours`, `en vol`, `attente`, `pending`, `ETA`) and has not been updated for 7 days is tombstoned (`deleted_at`), following the standard 30-day trash: `memory_restore` puts it back.
 - **Exact duplicates**: two live entries of the same scope with the same normalized title and body, and the same anchoring, collapse to the newest copy; the older ones are deleted for good (an exact duplicate adds nothing to the trash).
@@ -156,7 +156,7 @@ One SQLite store (WAL mode, concurrent-safe) holds the entries; the transcripts 
 
 The agent is nudged to write memory itself: the system prompt asks for durable decisions, facts, preferences and gotchas as they emerge, and the compaction prompt repeats the instruction next to the store inventory. Reusable lessons (`kind=lesson`: a non-obvious approach that clearly failed or succeeded, and why) are injected first in later sessions, so known mistakes are not retried.
 
-Optional LLM reflection, off by default: on `session.idle` the plugin sends the last `transcriptChars` of the session to one bounded LLM call and saves at most `maxLessons` distilled lessons through the same store (the secret guard applies). Subagent sessions are skipped and at most one reflection runs per session.
+Optional LLM reflection, off by default: on `session.idle` the plugin sends the last `transcriptChars` of the session to one bounded LLM call and saves the distilled lessons through the same store (the secret guard applies). Subagent sessions are skipped and at most one reflection runs per session.
 
 ```json
 {
@@ -166,7 +166,7 @@ Optional LLM reflection, off by default: on `session.idle` the plugin sends the 
 }
 ```
 
-Options: `enabled` (default `false`), `model` (`"provider/model"`, default: the host's model), `maxLessons` (default 3, cap 10), `transcriptChars` (default 8000).
+Options: `enabled` (default `false`), `model` (`"provider/model"`, default: the host's model), `transcriptChars` (default 8000). There is no per-day cap on lesson saves: a burst (fresh install, new model) legitimately produces many lessons at once, and the anti-spam work is the quality bar in the directive, the replace-by-title dedup, and the sweep.
 
 Cost per reflection: ~2k input tokens (the bounded transcript) and at most ~300 output tokens, at most once per session: roughly $0.001 with a small model, $0.01 with a frontier model (indicative). The nudges and injections are plain text: they cost nothing.
 

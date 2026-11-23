@@ -6,7 +6,7 @@ import { openMemoryDb, type MemoryDb } from "./lib/db.js";
 import { databaseSizeBytes } from "./lib/db.js";
 import {
   HOUSEKEEPING_INTERVAL_MS,
-  sweepHousekeeping,
+  runHousekeepingPass,
   type HousekeepingReport,
 } from "./lib/housekeeping.js";
 import {
@@ -17,13 +17,7 @@ import {
 } from "./lib/memory-ops.js";
 import { currentCommitHash } from "./lib/git.js";
 import { createDurableStore } from "./lib/persist.js";
-import {
-  defaultMeshDataDir,
-  defaultMeshInboxDir,
-  defaultMeshOutboxDir,
-  syncExport,
-  syncImport,
-} from "./lib/sync.js";
+import { defaultMeshDataDir, defaultMeshInboxDir } from "./lib/sync.js";
 import { buildSidebarSnapshot } from "./lib/tui-snapshot.js";
 import { createReflection, parseReflectionConfig } from "./lib/reflection.js";
 import { parseReflectionActivation, reflectionGuidance } from "./lib/reflection.js";
@@ -99,15 +93,14 @@ export const MemoryV2 = Plugin.define({
       return db;
     };
     const injected = oncePerSession();
-    // The inference-only reflection loop: the standing directive plus a per-day lesson
-    // budget (the deep-reflection config's maxLessons doubles as the budget).
+    // The inference-only reflection loop: the standing directive (the current model
+    // distills lessons itself, no separate call).
     const reflectionLoop = parseReflectionActivation(options.reflection);
     const guidance = reflectionLoop.enabled
-      ? `${SYSTEM_GUIDANCE}\n${reflectionGuidance(reflectionLoop.maxPerDay)}`
+      ? `${SYSTEM_GUIDANCE}\n${reflectionGuidance()}`
       : SYSTEM_GUIDANCE;
     const ops = createMemoryOps(getDb, {
       onLessonSaved: () => injected.reset(),
-      ...(reflectionLoop.enabled ? { lessonBudgetPerDay: reflectionLoop.maxPerDay } : {}),
     });
 
     // Request and compaction hooks carry no directory: the instance scope is the project.
@@ -126,19 +119,15 @@ export const MemoryV2 = Plugin.define({
         return null;
       }
       try {
-        const report = sweepHousekeeping(getDb(), {
+        // The same full pass the manual memory_sweep tool runs: sweep plus the mesh
+        // sync twins, so both entry points stay in lockstep by construction.
+        const report = runHousekeepingPass(getDb(), {
           scope: projectScope,
           ttlMs: housekeeping.ttlMs,
           now: Date.now(),
           directory: ctx.location.directory,
         });
         lastSweepReport = report;
-        // The mesh inbox pass rides the same cadence: entries pushed by paired hosts
-        // since the last sweep are imported here, by the path convention in lib/sync.ts.
-        syncImport(getDb(), { inboxDir: defaultMeshInboxDir() });
-        // And the outbound twin: the scope's shareable entries land in the mesh outbox,
-        // where the mesh pusher (>= 0.12) picks them up for the paired peers.
-        syncExport(getDb(), { outboxDir: defaultMeshOutboxDir(), scope: projectScope });
         return report;
       } catch {
         return null;

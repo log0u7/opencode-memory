@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-11-23
+
+### Removed
+
+- **The daily lesson budget** (`maxLessons` / 3 lessons per day per project): it
+  blocked legitimate bursts twice in one day — a subagent's lesson during a
+  0.15.0 session, and a same-title refinement whose re-save was refused because
+  the guard ran before the replace-by-title lookup. A fresh install or a new
+  model legitimately produces many lessons at once, and a blocked lesson is
+  never re-learned. The remaining guards carry the anti-spam: the quality bar
+  in the reflection directive, replace-by-title dedup (with heat), the supersede
+  suggestion at save, the sweep's housekeeping, and the secret guard. A config
+  that still carries `maxLessons` is accepted and silently ignored.
+
+### Fixed
+
+- **`memory_sweep` runs the full housekeeping pass**, the exact sequence of the
+  automatic boot/daily pass: sweep plus the mesh sync twins (inbox import,
+  shareable export to the outbox). Both entry points share one
+  `runHousekeepingPass`, so a manual sweep can no longer leave the outbox empty
+  until the next daily tick.
+
 ## [0.20.0] - 2026-11-23
 
 ### Added
