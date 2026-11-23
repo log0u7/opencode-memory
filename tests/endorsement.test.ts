@@ -11,7 +11,7 @@ import { createMemoryOps } from "../src/lib/memory-ops.js";
 import { parseReflectionActivation, reflectionGuidance } from "../src/lib/reflection.js";
 import { allLive, endorseEntry, forget, isShareable, saveEntry } from "../src/lib/store.js";
 
-let dirs: string[] = [];
+const dirs: string[] = [];
 let db: MemoryDb;
 
 function save(options: { source?: string; shareable?: boolean; title?: string } = {}) {

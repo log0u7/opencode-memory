@@ -577,7 +577,7 @@ export function allLive(db: MemoryDb, scope: string): Entry[] {
 export function listShareable(db: MemoryDb, scope: string): Entry[] {
   return db.conn
     .all<Row>(
-      `SELECT * FROM entries WHERE scope = ? AND ${LIVE}
+      `SELECT * FROM entries WHERE scope = ? AND status = 'current' AND ${LIVE}
        AND endorsed_by IS NOT NULL AND endorsed_by != '[]'
        ORDER BY created_at ASC, id ASC`,
       [canonicalScope(scope)],

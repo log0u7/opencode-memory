@@ -16,7 +16,7 @@ import {
   oncePerSession,
 } from "./lib/memory-ops.js";
 import { currentCommitHash } from "./lib/git.js";
-import { defaultMeshInboxDir, syncImport } from "./lib/sync.js";
+import { defaultMeshInboxDir, defaultMeshOutboxDir, syncExport, syncImport } from "./lib/sync.js";
 import { createReflection, parseReflectionConfig } from "./lib/reflection.js";
 import { parseReflectionActivation, reflectionGuidance } from "./lib/reflection.js";
 import {
@@ -124,6 +124,9 @@ export const MemoryV2 = Plugin.define({
         // The mesh inbox pass rides the same cadence: entries pushed by paired hosts
         // since the last sweep are imported here, by the path convention in lib/sync.ts.
         syncImport(getDb(), { inboxDir: defaultMeshInboxDir() });
+        // And the outbound twin: the scope's shareable entries land in the mesh outbox,
+        // where the mesh pusher (>= 0.12) picks them up for the paired peers.
+        syncExport(getDb(), { outboxDir: defaultMeshOutboxDir(), scope: projectScope });
         return report;
       } catch {
         return null;

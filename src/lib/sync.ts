@@ -1,9 +1,9 @@
-import { readdirSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { MemoryDb } from "./db.js";
-import { importPortable } from "./portable.js";
+import { exportPortable, importPortable } from "./portable.js";
 
 /**
  * Directory convention shared with opencode-mesh >= 0.12, and the ONLY contract between
@@ -66,4 +66,44 @@ export function syncImport(db: MemoryDb, options: { inboxDir: string }): SyncImp
     }
   }
   return report;
+}
+
+/**
+ * The outbound twin of `defaultMeshInboxDir`: the memory plugin exports its shareable
+ * entries here and the mesh (>= 0.12) pushes the file to every paired peer on its
+ * periodic pass. Same convention, opposite direction.
+ */
+export function defaultMeshOutboxDir(): string {
+  const dataHome = process.env.XDG_DATA_HOME || join(homeDir(), ".local", "share");
+  return join(dataHome, "opencode-mesh", "memory-sync", "outbox");
+}
+
+export type SyncExportReport = {
+  /** Shareable entries written this pass. */
+  exported: number;
+  /** The outbox file, or null when the mesh has never run on this machine. */
+  path: string | null;
+};
+
+/**
+ * Export the scope's shareable entries to the mesh outbox. Gated on the mesh's data
+ * dir existing: a machine without opencode-mesh must not grow directories for a
+ * transport that will never come. The file is rewritten whole each pass (atomic), so
+ * un-endorsing or superseding an entry removes it from the next push; the mesh pusher
+ * reacts to the mtime, and only stamps its cursor when every paired peer accepted.
+ */
+export function syncExport(
+  db: MemoryDb,
+  options: { outboxDir: string; scope: string },
+): SyncExportReport {
+  // outboxDir = <dataHome>/opencode-mesh/memory-sync/outbox: the grandparent is the
+  // mesh's own data dir and only its existence proves the transport is installed.
+  const meshDataDir = join(options.outboxDir, "..", "..");
+  if (!existsSync(meshDataDir)) {
+    return { exported: 0, path: null };
+  }
+  const filePath = join(options.outboxDir, "shareable.jsonl");
+  mkdirSync(options.outboxDir, { recursive: true });
+  const exported = exportPortable(db, options.scope, filePath, { shareable: true });
+  return { exported, path: filePath };
 }

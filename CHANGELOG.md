@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-11-23
+
+### Added
+
+- **Automatic outbox export**: the housekeeping pass now also exports the scope's
+  shareable entries to the mesh outbox (`<mesh dataDir>/memory-sync/outbox/shareable.jsonl`),
+  the outbound twin of the inbox import (0.19.0). Gated on the mesh's data dir
+  existing — a machine without opencode-mesh grows nothing — and rewritten atomically
+  each pass, so un-endorsing or superseding an entry removes it from the next push.
+  The mesh pusher (0.12.0) transports the file to every paired peer; the cross-host
+  loop now runs without a manual `memory_export`.
+
+### Fixed
+
+- `listShareable` (and therefore `memory_export --shareable` and the outbox) excluded
+  tombstoned rows but kept **superseded** ones: a superseded endorsed entry would
+  have kept travelling cross-host. The shareable list is now `status = 'current'`
+  only.
+
 ## [0.19.0] - 2026-11-23
 
 ### Added

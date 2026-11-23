@@ -7,7 +7,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openMemoryDb, type MemoryDb } from "../src/lib/db.js";
 import { createMemoryOps } from "../src/lib/memory-ops.js";
 import { exportPortable, importPortable, PORTABLE_FILE_NAME } from "../src/lib/portable.js";
-import { defaultMeshInboxDir, syncImport } from "../src/lib/sync.js";
+import {
+  defaultMeshInboxDir,
+  defaultMeshOutboxDir,
+  syncExport,
+  syncImport,
+} from "../src/lib/sync.js";
 import { allLive, endorseEntry, listShareable, saveEntry } from "../src/lib/store.js";
 
 let dir: string;
@@ -203,6 +208,90 @@ describe("syncImport", () => {
     process.env.XDG_DATA_HOME = custom;
     try {
       expect(defaultMeshInboxDir()).toBe(join(custom, "opencode-mesh", "memory-sync", "inbox"));
+    } finally {
+      if (previous === undefined) {
+        delete process.env.XDG_DATA_HOME;
+      } else {
+        process.env.XDG_DATA_HOME = previous;
+      }
+    }
+  });
+});
+
+describe("syncExport", () => {
+  function meshTree(): string {
+    const dataHome = join(dir, "xdg-data");
+    mkdirSync(join(dataHome, "opencode-mesh"), { recursive: true });
+    return dataHome;
+  }
+
+  it("writes only shareable entries to the mesh outbox", () => {
+    const dataHome = meshTree();
+    save({ source: "agent-a", shareable: true, title: "published" });
+    save({ source: "agent-a", title: "endorsed by a peer" });
+    endorseEntry(db, {
+      id: save({ source: "agent-a", title: "endorsed later" }).id,
+      endorser: "peer",
+    });
+    save({ title: "stays local" });
+    const outbox = join(dataHome, "opencode-mesh", "memory-sync", "outbox");
+    const report = syncExport(db, { outboxDir: outbox, scope: "/w" });
+    expect(report.exported).toBe(2);
+    expect(report.path).toBe(join(outbox, "shareable.jsonl"));
+    const lines = readFileSync(join(outbox, "shareable.jsonl"), "utf8").trim().split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines.every((line) => JSON.parse(line).title !== "stays local")).toBe(true);
+  });
+
+  it("rewrites the whole file: un-endorsed or superseded entries leave the next push", () => {
+    const dataHome = meshTree();
+    const kept = save({ source: "agent-a", shareable: true, title: "kept" });
+    const gone = save({ source: "agent-a", shareable: true, title: "gone" });
+    const outbox = join(dataHome, "opencode-mesh", "memory-sync", "outbox");
+    syncExport(db, { outboxDir: outbox, scope: "/w" });
+    // supersede 'gone': a superseded row is not LIVE, so it must leave the next push
+    saveEntry(db, {
+      scope: "/w",
+      kind: "fact",
+      title: "gone v2",
+      body: "b",
+      tags: [],
+      expires_at: null,
+      supersedes: gone.id,
+    });
+    syncExport(db, { outboxDir: outbox, scope: "/w" });
+    const titles = readFileSync(join(outbox, "shareable.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line).title);
+    expect(titles).toContain("kept");
+    expect(titles).not.toContain("gone");
+    expect(titles).not.toContain("gone v2"); // only current rows travel
+    expect(kept.id).toBeTruthy();
+  });
+
+  it("writes nothing when the mesh has never run on this machine", () => {
+    const outbox = join(dir, "no-mesh", "opencode-mesh", "memory-sync", "outbox");
+    save({ source: "agent-a", shareable: true });
+    const report = syncExport(db, { outboxDir: outbox, scope: "/w" });
+    expect(report.exported).toBe(0);
+    expect(report.path).toBeNull();
+    let exists = true;
+    try {
+      readdirSync(outbox);
+    } catch {
+      exists = false;
+    }
+    expect(exists).toBe(false);
+  });
+
+  it("keeps the outbox convention symmetric with the inbox", () => {
+    const previous = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = join(dir, "xdg");
+    try {
+      expect(defaultMeshOutboxDir()).toBe(
+        join(dir, "xdg", "opencode-mesh", "memory-sync", "outbox"),
+      );
     } finally {
       if (previous === undefined) {
         delete process.env.XDG_DATA_HOME;
