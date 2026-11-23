@@ -220,6 +220,41 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
         },
         execute: async (args) => ops.restore(args),
       }),
+
+      memory_export: tool({
+        description: TOOL_DESCRIPTIONS.exportEntries,
+        args: {
+          scope: tool.schema
+            .string()
+            .optional()
+            .describe("Scope key; defaults to this session's worktree"),
+          path: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "JSONL file path; default .opencode/memory/memory-export.jsonl in the project",
+            ),
+        },
+        execute: async (args, context) =>
+          ops.exportEntries(
+            args,
+            defaultScope(args.scope ?? context.worktree ?? context.directory),
+          ),
+      }),
+
+      memory_import: tool({
+        description: TOOL_DESCRIPTIONS.importEntries,
+        args: {
+          path: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "JSONL file path; default .opencode/memory/memory-export.jsonl in the project",
+            ),
+        },
+        execute: async (args, context) =>
+          ops.importEntries(args, defaultScope(context.worktree, context.directory)),
+      }),
     },
   };
 

@@ -69,7 +69,9 @@ export function canonicalScope(...candidates: Array<string | undefined>): string
   return first.trim().replace(/\/+$/, "") || FALLBACK_SCOPE;
 }
 
-function validateEntry(input: EntryInput): void {
+/** Field rules shared by saves and portable imports: bounds on title, body, kind, tags,
+ * plus the shape of anchored paths and commit refs. Throws a TypeError naming the rule. */
+export function validateEntry(input: EntryInput): void {
   if (input.title.length === 0 || input.title.length > TITLE_MAX) {
     throw new TypeError(`title must be 1..${TITLE_MAX} characters`);
   }
@@ -107,12 +109,24 @@ function validateEntry(input: EntryInput): void {
   if (input.commit_sha !== undefined && !/^[0-9a-f]{7,64}$/i.test(input.commit_sha)) {
     throw new TypeError("commit_sha must be a git sha (7..64 hex)");
   }
-  if (SECRET_PATTERNS.some((pattern) => looksLikeSecret(input, pattern))) {
+  if (looksLikeSecret(input)) {
     throw new SecretDetectedError();
   }
 }
 
-function looksLikeSecret(input: EntryInput, pattern: RegExp): boolean {
+/** Whether any high-confidence credential pattern matches one of the entry's text
+ * fields. Shared by saves, portable exports and portable imports, so the three paths
+ * can never drift apart on what counts as a secret. */
+export function looksLikeSecret(
+  input: Pick<EntryInput, "title" | "kind" | "body" | "tags">,
+): boolean {
+  return SECRET_PATTERNS.some((pattern) => matchesSecretPattern(input, pattern));
+}
+
+function matchesSecretPattern(
+  input: Pick<EntryInput, "title" | "kind" | "body" | "tags">,
+  pattern: RegExp,
+): boolean {
   if (pattern.test(input.title) || pattern.test(input.kind) || pattern.test(input.body)) {
     return true;
   }
@@ -424,6 +438,16 @@ export function list(
        LIMIT ?`,
       [scope, now, ...kindArgs, limit],
     )
+    .map(rowToEntry);
+}
+
+/** Every live row of one scope, superseded tombstones included, oldest first: the
+ * portable export carries the full lifecycle, not the current-rows-only read view. */
+export function allLive(db: MemoryDb, scope: string): Entry[] {
+  return db.conn
+    .all<Row>(`SELECT * FROM entries WHERE scope = ? AND ${LIVE} ORDER BY created_at ASC, id ASC`, [
+      canonicalScope(scope),
+    ])
     .map(rowToEntry);
 }
 

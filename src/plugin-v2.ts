@@ -341,6 +341,57 @@ export const MemoryV2 = Plugin.define({
         },
       });
 
+      editor.add({
+        name: "memory_export",
+        description: TOOL_DESCRIPTIONS.exportEntries,
+        input: {
+          type: "object",
+          properties: {
+            scope: {
+              type: "string",
+              description: "Scope key; defaults to the project directory",
+            },
+            path: {
+              type: "string",
+              description:
+                "JSONL file path; default .opencode/memory/memory-export.jsonl in the project",
+            },
+          },
+          additionalProperties: false,
+        },
+        async execute(args) {
+          const a = args as { scope?: string; path?: string };
+          return {
+            content: ops.exportEntries(
+              a,
+              defaultScope(undefined, a.scope ?? ctx.location.directory),
+            ),
+          };
+        },
+      });
+
+      editor.add({
+        name: "memory_import",
+        description: TOOL_DESCRIPTIONS.importEntries,
+        input: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description:
+                "JSONL file path; default .opencode/memory/memory-export.jsonl in the project",
+            },
+          },
+          additionalProperties: false,
+        },
+        async execute(args) {
+          const a = args as { path?: string };
+          return {
+            content: ops.importEntries(a, defaultScope(undefined, ctx.location.directory)),
+          };
+        },
+      });
+
       if (!retrieval.enabled) {
         return;
       }

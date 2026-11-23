@@ -102,10 +102,12 @@ function reflectionClient(promptImpl?: unknown) {
 }
 
 describe("memory plugin tools", () => {
-  it("registers the six memory tools", async () => {
+  it("registers the eight memory tools", async () => {
     const tools = await loadTools({ dbPath: join(dir, "m.db") });
     expect(Object.keys(tools).sort()).toEqual([
+      "memory_export",
       "memory_forget",
+      "memory_import",
       "memory_list",
       "memory_restore",
       "memory_save",
