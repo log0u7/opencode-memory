@@ -5,6 +5,7 @@ import { isEntryFresh } from "./git.js";
 import { exportPortable, importPortable, resolvePortablePath } from "./portable.js";
 import {
   forget,
+  HOT_THRESHOLD,
   list,
   neverRecalled,
   oldestCreated,
@@ -58,10 +59,13 @@ export type MemoryOps = {
   restore: (args: RestoreArgs) => string;
   exportEntries: (args: ExportArgs, scope: string) => string;
   importEntries: (args: ImportArgs, scope: string) => string;
-  sweep: (args: SweepArgs, scope: string) => string;
+  sweep: (args: SweepArgs, scope: string, options?: { directory?: string }) => string;
 };
 
-export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
+export function createMemoryOps(
+  getDb: () => MemoryDb,
+  options: { onLessonSaved?: () => void } = {},
+): MemoryOps {
   return {
     save: (args, scope, source) =>
       run(() => {
@@ -77,6 +81,12 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
           ...(args.commit_sha !== undefined ? { commit_sha: args.commit_sha } : {}),
           ...(args.supersedes !== undefined ? { supersedes: args.supersedes } : {}),
         });
+        // A lesson save (or any row that reached hot) is new priority knowledge:
+        // dropping the once-per-session injection cache makes the next turn
+        // re-inject the inventory with the hot entry up front.
+        if (entry.kind === "lesson" || (entry.heat ?? 0) >= HOT_THRESHOLD) {
+          options.onLessonSaved?.();
+        }
         let text = `saved ${entry.id} (${entry.scope}, ${created ? "created" : "updated"})`;
         if (superseded !== undefined) {
           text += `; replaced ${superseded}`;
@@ -185,7 +195,7 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
         const count = importPortable(getDb(), filePath);
         return `imported ${count} entries from ${filePath}`;
       }),
-    sweep: (args, scope) =>
+    sweep: (args, scope, options = {}) =>
       run(() => {
         // A non-positive ttl_days would sweep fresh entries; it falls back to the default.
         const days =
@@ -195,6 +205,7 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
         const report = sweepHousekeeping(getDb(), {
           scope,
           ...(days !== undefined ? { ttlMs: days * DAY_MS } : {}),
+          ...(options.directory !== undefined ? { directory: options.directory } : {}),
         });
         return renderSweep(report);
       }),
@@ -207,6 +218,11 @@ function renderSweep(report: HousekeepingReport): string {
   let text =
     `swept: ${report.tombstoned.length} tombstoned (dated), ` +
     `${report.deleted.length} deleted (duplicate), ${report.kept} kept`;
+  // Cooled is printed only when it moved: the zero case is the old shape, and
+  // callers without a directory never cool anything.
+  if (report.cooled > 0) {
+    text += `, ${report.cooled} cooled (anchored fresh)`;
+  }
   for (const [label, rows] of [
     ["tombstoned", report.tombstoned],
     ["deleted", report.deleted],
@@ -300,9 +316,11 @@ export function oncePerSession() {
 
 /**
  * Bounded summary of recent entries, injected into the first request of a session and
- * into the compaction context. Lessons are promoted above recency noise so a stored
- * lesson survives a chatty store. `null` when there is nothing worth injecting, so a
- * caller pushes nothing at all.
+ * into the compaction context. Hot entries (heat >= HOT_THRESHOLD, any kind) are
+ * promoted above everything and injected outside the character budget: a recurring
+ * lesson must reach the model even when the budget is saturated. Lessons follow, then
+ * recency noise. `null` when there is nothing worth injecting, so a caller pushes
+ * nothing at all.
  */
 export function memoryInventory(
   getDb: () => MemoryDb,
@@ -332,13 +350,27 @@ export function memoryInventory(
     return null;
   }
 
+  const hot = fresh.filter((entry) => (entry.heat ?? 0) >= HOT_THRESHOLD);
+  const hotIds = new Set(hot.map((entry) => entry.id));
+  const rest = fresh.filter((entry) => !hotIds.has(entry.id));
+
   const lines = [INVENTORY_HEADER];
   let size = INVENTORY_HEADER.length;
   const injected: string[] = [];
-  for (const entry of fresh) {
-    const by = entry.source === undefined ? "" : `, by ${entry.source}`;
-    const line = `- [${entry.kind}] ${entry.title} (updated ${dayOf(entry.updated_at)}${by})`;
-    if (size + line.length + 1 > INVENTORY_MAX_CHARS) {
+  // Hot lines pass before everything and do not count against the budget: only
+  // their characters extend the ceiling the remaining lines are cut against.
+  let hotChars = 0;
+  for (const entry of hot) {
+    const line = inventoryLine(entry, true);
+    lines.push(line);
+    injected.push(entry.id);
+    size += line.length + 1;
+    hotChars += line.length + 1;
+  }
+  const ceiling = INVENTORY_MAX_CHARS + hotChars;
+  for (const entry of rest) {
+    const line = inventoryLine(entry, false);
+    if (size + line.length + 1 > ceiling) {
       break;
     }
     lines.push(line);
@@ -351,6 +383,11 @@ export function memoryInventory(
     touchUsage(getDb(), injected, Date.now());
   }
   return lines.join("\n");
+}
+
+function inventoryLine(entry: Entry, hot: boolean): string {
+  const by = entry.source === undefined ? "" : `, by ${entry.source}`;
+  return `- [${entry.kind}]${hot ? "[HOT]" : ""} ${entry.title} (updated ${dayOf(entry.updated_at)}${by})`;
 }
 
 function dayOf(epochMs: number): string {

@@ -124,10 +124,10 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
     db ??= openMemoryDb(dbPath);
     return db;
   };
-  const ops = createMemoryOps(getDb);
+  const injected = oncePerSession();
+  const ops = createMemoryOps(getDb, { onLessonSaved: () => injected.reset() });
   // Request and compaction hooks carry no directory: the instance scope is the project.
   const projectScope = defaultScope(input.worktree, input.directory);
-  const injected = oncePerSession();
   const reflection = parseReflectionConfig(options?.reflection);
   const inventoryDir = input.directory ?? input.worktree ?? process.cwd();
 
@@ -144,6 +144,7 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
         scope: projectScope,
         ttlMs: housekeeping.ttlMs,
         now: Date.now(),
+        directory: inventoryDir,
       });
     } catch {
       return null;
@@ -269,7 +270,9 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
             .describe("Override the dated-rule staleness TTL in days (default 7)"),
         },
         execute: async (args, context) =>
-          ops.sweep(args, defaultScope(args.scope ?? context.worktree ?? context.directory)),
+          ops.sweep(args, defaultScope(args.scope ?? context.worktree ?? context.directory), {
+            directory: context.directory ?? context.worktree ?? process.cwd(),
+          }),
       }),
 
       memory_export: tool({

@@ -44,7 +44,10 @@ function gitStatus(root: string, args: string[]): { status: number; stdout: stri
  * of them is untracked, and none of them is missing (an entry documenting a
  * deleted file is stale). Unanchored entries (no paths or no commit) are always
  * fresh: nothing observable contradicts them. */
-export function isEntryFresh(entry: Entry, directory: string): boolean {
+export function isEntryFresh(
+  entry: { commit_sha?: string | undefined; paths?: string[] | undefined },
+  directory: string,
+): boolean {
   if (!entry.commit_sha || !entry.paths || entry.paths.length === 0) return true;
   if (!/^[0-9a-f]{7,64}$/i.test(entry.commit_sha)) return false;
   const root = resolve(directory);

@@ -14,6 +14,10 @@ export const MAX_LIMIT = 50;
 /** A rendered body is a preview, never the full text: it bounds a tool result. */
 export const BODY_PREVIEW_MAX = 500;
 
+/** A lesson re-recorded this many times (the first save counts) is hot: the
+ * inventory injects it before everything else, outside the character budget. */
+export const HOT_THRESHOLD = 2;
+
 export const DEFAULT_LIMIT = { search: 10, list: 20 };
 
 /** Scope used when no worktree and no directory is known, so rows stay addressable. */
@@ -225,15 +229,18 @@ export function saveEntry(
   // data loss. Upgrade path: a normalized key column plus BEGIN IMMEDIATE.
   const existing =
     input.supersedes === undefined
-      ? db.conn.get<{ id: string; created_at: number }>(
-          `SELECT id, created_at FROM entries WHERE scope = ? AND lower(trim(title)) = ? AND status = 'current' AND ${LIVE}`,
+      ? db.conn.get<{ id: string; created_at: number; heat: number }>(
+          `SELECT id, created_at, heat FROM entries WHERE scope = ? AND lower(trim(title)) = ? AND status = 'current' AND ${LIVE}`,
           [scope, input.title.trim().toLowerCase()],
         )
       : null;
 
   if (existing) {
+    // Re-recording a lesson is the recurrence signal: every rewrite of a lesson
+    // row heats it up by one. Other kinds leave the counter untouched.
+    const heat = existing.heat + (input.kind === "lesson" ? 1 : 0);
     db.conn.run(
-      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ?, source = ?, paths = ?, commit_sha = ? WHERE id = ?",
+      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ?, source = ?, paths = ?, commit_sha = ?, heat = ? WHERE id = ?",
       [
         input.kind,
         input.body,
@@ -243,6 +250,7 @@ export function saveEntry(
         input.source ?? null,
         JSON.stringify(input.paths ?? []),
         input.commit_sha ?? null,
+        heat,
         existing.id,
       ],
     );
@@ -260,6 +268,7 @@ export function saveEntry(
         ...(input.source !== undefined ? { source: input.source } : {}),
         ...(input.paths !== undefined ? { paths: input.paths } : {}),
         ...(input.commit_sha !== undefined ? { commit_sha: input.commit_sha } : {}),
+        ...(heat > 0 ? { heat } : {}),
         status: "current",
       },
       created: false,
@@ -267,8 +276,11 @@ export function saveEntry(
   }
 
   const id = randomUUID();
+  // A brand-new lesson starts hot-adjacent (heat 1): the first re-record tips it
+  // over HOT_THRESHOLD. Other kinds start at the column default, 0.
+  const heat = input.kind === "lesson" ? 1 : 0;
   db.conn.run(
-    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, supersedes, status, superseded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, supersedes, status, superseded_at, heat) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       id,
       scope,
@@ -285,6 +297,7 @@ export function saveEntry(
       input.supersedes ?? null,
       "current",
       null,
+      heat,
     ],
   );
 
@@ -302,6 +315,7 @@ export function saveEntry(
       ...(input.source !== undefined ? { source: input.source } : {}),
       ...(input.paths !== undefined ? { paths: input.paths } : {}),
       ...(input.commit_sha !== undefined ? { commit_sha: input.commit_sha } : {}),
+      ...(heat > 0 ? { heat } : {}),
       ...(input.supersedes !== undefined ? { supersedes: input.supersedes } : {}),
       status: "current",
     },
@@ -635,6 +649,7 @@ function rowToEntry(row: Row): Entry {
     ...(row.superseded_at !== null && row.superseded_at !== undefined
       ? { superseded_at: row.superseded_at }
       : {}),
+    ...(row.heat !== null && row.heat !== undefined && row.heat > 0 ? { heat: row.heat } : {}),
   };
 }
 
