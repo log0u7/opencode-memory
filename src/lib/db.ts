@@ -49,6 +49,8 @@ const ADDED_COLUMNS = [
   "supersedes TEXT",
   "status TEXT NOT NULL DEFAULT 'current'",
   "superseded_at INTEGER",
+  "use_count INTEGER NOT NULL DEFAULT 0",
+  "last_used INTEGER",
 ];
 
 // SECURITY.md promises restrictive permissions whatever the user's umask is, so the
@@ -65,6 +67,11 @@ export function openMemoryDb(path: string): MemoryDb {
 
   const conn = openSqlite(path);
   conn.run("PRAGMA journal_mode = WAL");
+  // WAL + synchronous=NORMAL is SQLite's recommended posture: reads add one usage
+  // write per served entry, and FULL's fsync-per-commit makes hundreds of small
+  // commits (session injections, saves) crawl. NORMAL still survives a process
+  // crash; only a power cut can drop un-checkpointed commits.
+  conn.run("PRAGMA synchronous = NORMAL");
   conn.run("PRAGMA busy_timeout = 5000");
   conn.exec(SCHEMA);
   addMissingColumns(conn);

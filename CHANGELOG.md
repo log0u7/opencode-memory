@@ -5,6 +5,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.15.0] - 2026-11-23
+
+### Added
+
+- **Usage tracking**: every entry now counts how many times it was served to
+  the model — `memory_search` touches its hits, and the inventory injection
+  touches only the lines that made it under the character budget (cut entries
+  stay unused). New columns `use_count` / `last_used` are backfilled on open.
+- **Never-recalled report in `memory_stats`**: entries stored for 30+ days that
+  were never served to the model are listed (oldest first, first 10 named) as
+  `never-recalled: N (...)`. This is a purge **on proposal only** — nothing is
+  deleted automatically; the agent or the user decides and acts through
+  `memory_forget`.
+
+### Notes
+
+- Usage tracking adds one small write per served read (search hits, injected
+  inventory lines). The store now runs `synchronous=NORMAL` with WAL (SQLite's
+  recommended posture): same crash safety for the process, only a power cut
+  could drop the last un-checkpointed commits.
+
 ## [0.14.0] - 2026-11-23
 
 ### Added
