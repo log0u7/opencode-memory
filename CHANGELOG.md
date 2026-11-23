@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-11-23
+
+### Added
+
+- **Portable export/import**: `memory_export` writes the live entries of a scope
+  (superseded tombstones included) to a JSONL file — one full entry per line,
+  ascending `created_at` order so a re-export mostly appends in git diffs. Default
+  path `.opencode/memory/memory-export.jsonl` inside the project (derived from an
+  absolute scope; a named scope needs an explicit `path`). The file is versionable
+  in git and shareable across machines.
+- The export is atomic (tmp file + rename) and mode `0600`, matching the store's
+  permission promises. `memory_export` reports `exported <n> entries to <path>`.
+- **Secret-scan on both directions**: credential-like content is never exported
+  (a secret that survived an old save must not gain a second life in a
+  git-versionable file) and is skipped on import. Callers can add a stricter
+  `rejectContent` filter; the built-in credential scan cannot be bypassed.
+- **Idempotent import**: `memory_import` reads the JSONL back with the original
+  ids, so re-importing the same file imports nothing and cross-machine copies
+  stay the same entries. Invalid lines abort with their line number before
+  anything is written.
+- **Workflow-guard import rule**: an import never supersedes local entries. A
+  `superseded` entry imports only when its own `supersedes` target travels in
+  the same file; a current entry whose `supersedes` target stays outside the
+  file imports without the link.
+
 ## [0.12.0] - 2026-11-22
 
 ### Added

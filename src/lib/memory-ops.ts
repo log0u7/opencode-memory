@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 
 import { databaseSizeBytes, type MemoryDb } from "./db.js";
 import { isEntryFresh } from "./git.js";
+import { exportPortable, importPortable, resolvePortablePath } from "./portable.js";
 import {
   forget,
   list,
@@ -39,6 +40,8 @@ export type SearchArgs = { query: string; limit?: number | undefined };
 export type ListArgs = { limit?: number | undefined };
 export type ForgetArgs = { id?: string | undefined; query?: string | undefined };
 export type RestoreArgs = { id: string };
+export type ExportArgs = { scope?: string | undefined; path?: string | undefined };
+export type ImportArgs = { path?: string | undefined };
 
 /** One shared behaviour behind both plugin entry points. Every operation returns the
  * model-facing text directly, so a caller cannot bypass caps or error handling. */
@@ -49,6 +52,8 @@ export type MemoryOps = {
   forget: (args: ForgetArgs, scope: string) => string;
   stats: (scope: string) => string;
   restore: (args: RestoreArgs) => string;
+  exportEntries: (args: ExportArgs, scope: string) => string;
+  importEntries: (args: ImportArgs, scope: string) => string;
 };
 
 export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
@@ -147,6 +152,18 @@ export function createMemoryOps(getDb: () => MemoryDb): MemoryOps {
           ? "no entry with that id"
           : `restored ${JSON.stringify(entry.title)} (${entry.id})`;
       }),
+    exportEntries: (args, scope) =>
+      run(() => {
+        const filePath = resolvePortablePath(args.path, scope);
+        const count = exportPortable(getDb(), scope, filePath);
+        return `exported ${count} entries to ${filePath}`;
+      }),
+    importEntries: (args, scope) =>
+      run(() => {
+        const filePath = resolvePortablePath(args.path, scope);
+        const count = importPortable(getDb(), filePath);
+        return `imported ${count} entries from ${filePath}`;
+      }),
   };
 }
 
@@ -188,6 +205,10 @@ export const TOOL_DESCRIPTIONS = {
     "Count memory entries by kind for this project (plus global entries), with a total. Use it to see how much memory already exists, for example how many lessons reflection has written.",
   restore:
     "Put a trashed entry back, by id. Deletes are recoverable: memory_forget reports the ids it trashed, and memory_restore brings one of them back. An entry stays restorable for 30 days.",
+  exportEntries:
+    "Export memory entries for a scope to a portable JSONL file (default .opencode/memory/memory-export.jsonl in the project). The file is versionable in git and shareable across machines; credential-like content is never exported.",
+  importEntries:
+    "Import memory entries from a portable JSONL file (default .opencode/memory/memory-export.jsonl). Idempotent: entries whose id already exists are skipped, secrets are rejected, and the import never supersedes local entries (a supersedes link pointing outside the file is dropped).",
 } as const;
 
 /**
