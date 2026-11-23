@@ -36,6 +36,11 @@ export type Entry = {
    * it with `shareable` at save time. One endorsement from an agent other than the
    * author makes the entry shareable. Unset while nobody vouched. */
   endorsed_by?: string[];
+  /** Provenance marker on exported lines only: the hostname of the machine the
+   * export was written on. It labels cross-host knowledge in the JSONL format and
+   * tells importPortable to trust-and-remap the entry to the `global` scope; the
+   * store never persists it (an imported row carries no origin_host). */
+  origin_host?: string;
 };
 
 export type EntryInput = {

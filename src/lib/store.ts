@@ -550,6 +550,20 @@ export function listShareable(db: MemoryDb, scope: string): Entry[] {
     .filter((entry) => (entry.endorsed_by ?? []).length > 0);
 }
 
+/** The machine-wide twin of `listShareable`: the same live endorsed rows of EVERY
+ * scope. The mesh outbox is one file per machine, so the sync export must not let
+ * the calling project's scope decide what the other projects get to share. */
+export function listShareableAll(db: MemoryDb): Entry[] {
+  return db.conn
+    .all<Row>(
+      `SELECT * FROM entries WHERE status = 'current' AND ${LIVE}
+       AND endorsed_by IS NOT NULL AND endorsed_by != '[]'
+       ORDER BY created_at ASC, id ASC`,
+    )
+    .map(rowToEntry)
+    .filter((entry) => (entry.endorsed_by ?? []).length > 0);
+}
+
 /** One entry by id, machine-wide (ids are globally unique), whatever its scope or
  * lifecycle. The trashed flag lets the caller tell a recoverable delete from an
  * unknown id: both answer a memory_get, but with different guidance. */

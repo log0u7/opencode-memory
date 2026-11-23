@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-11-23
+
+### Fixed
+
+- **Cross-host sync entries are actually recalled**: an imported peer entry kept its
+  original scope — a project path that exists on the peer, never on this machine — so
+  search, list, inventory and sweep silently hid every received entry. Imports whose
+  lines carry the new `origin_host` provenance marker (added by the outbox export)
+  are remapped to the `global` scope, which every scope's reads include. The trust
+  model is assumed and documented: transport runs between TLS-pinned paired hosts,
+  exports are secret-scanned, and only endorsed entries travel — cross-host knowledge
+  is machine-wide by nature. Same-machine export/import round-trips (0.13.0 usage,
+  no `origin_host`) keep the verbatim behavior.
+- **The mesh outbox export is machine-wide**: `syncExport` wrote only the calling
+  project's shareables, so every other project's endorsed entries were dropped from
+  each push (one `shareable.jsonl`, rewritten per pass). The export now covers every
+  scope (`listShareableAll`), stamped with the host's name as `origin_host`.
+
+### Security
+
+- **Import trust boundary caps** (portable import): entries stamped more than 5
+  minutes in the future (`created_at` / `updated_at`, clock skew) are rejected with
+  the field named; `expires_at` more than 10 years ahead is rejected; `scope` is
+  capped at 512 characters and `source` at 256, with a clear rejection message.
+  Inbox files over 1 MiB are refused before being read, warned about once, and
+  renamed to `.oversized` so a runaway peer export can never pin the import pass
+  in an endless re-parse loop.
+
 ## [0.20.1] - 2026-11-23
 
 ### Removed

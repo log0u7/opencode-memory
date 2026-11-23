@@ -82,7 +82,9 @@ describe("portable export", () => {
       { now: 1000 },
     );
     save(dbA, input({ title: "two", body: "second", commit_sha: "abc1234" }), { now: 2000 });
-    save(dbA, input({ title: "three", body: "third", expires_at: 9999999999999 }), { now: 3000 });
+    // 2033 epoch ms: far enough to prove the TTL travels, near enough to pass the
+    // import gate's 10-year cap on expires_at.
+    save(dbA, input({ title: "three", body: "third", expires_at: 2000000000000 }), { now: 3000 });
 
     const file = join(dir, "round-trip.jsonl");
     expect(exportPortable(dbA, SCOPE, file)).toBe(3);
