@@ -88,12 +88,12 @@ export const MemoryV2 = Plugin.define({
       db ??= openMemoryDb(dbPath);
       return db;
     };
-    const ops = createMemoryOps(getDb);
+    const injected = oncePerSession();
+    const ops = createMemoryOps(getDb, { onLessonSaved: () => injected.reset() });
 
     // Request and compaction hooks carry no directory: the instance scope is the project.
     const projectScope = defaultScope(undefined, ctx.location.directory);
     const retrieval = parseRetrievalConfig(options);
-    const injected = oncePerSession();
 
     // Conservative automatic housekeeping: once at boot, then daily. A missing
     // store has nothing to sweep and must not be created for the sweep's sake; a
@@ -108,6 +108,7 @@ export const MemoryV2 = Plugin.define({
           scope: projectScope,
           ttlMs: housekeeping.ttlMs,
           now: Date.now(),
+          directory: ctx.location.directory,
         });
       } catch {
         return null;
@@ -391,7 +392,9 @@ export const MemoryV2 = Plugin.define({
         async execute(args) {
           const a = args as { scope?: string; ttl_days?: number };
           return {
-            content: ops.sweep(a, defaultScope(undefined, a.scope ?? ctx.location.directory)),
+            content: ops.sweep(a, defaultScope(undefined, a.scope ?? ctx.location.directory), {
+              directory: ctx.location.directory,
+            }),
           };
         },
       });

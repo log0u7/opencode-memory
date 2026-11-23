@@ -51,6 +51,7 @@ const ADDED_COLUMNS = [
   "superseded_at INTEGER",
   "use_count INTEGER NOT NULL DEFAULT 0",
   "last_used INTEGER",
+  "heat INTEGER NOT NULL DEFAULT 0",
 ];
 
 // SECURITY.md promises restrictive permissions whatever the user's umask is, so the

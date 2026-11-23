@@ -28,6 +28,10 @@ export type Entry = {
   status?: "current" | "superseded";
   /** When the row was superseded (epoch ms). */
   superseded_at?: number;
+  /** Recurrence counter on lessons: +1 each time the knowledge is created or
+   * re-recorded under the same title. At or above HOT_THRESHOLD the entry is
+   * hot: the inventory injects it outside the character budget. Unset when 0. */
+  heat?: number;
 };
 
 export type EntryInput = {

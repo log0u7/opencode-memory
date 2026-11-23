@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-23
+
+### Added
+
+- **Hot lessons (heat counter)**: a lesson saved under a title that already exists in
+  the same scope gains one point of heat instead of stacking a duplicate (a brand-new
+  lesson starts at heat 1). At or above `HOT_THRESHOLD` (2) the entry is **hot**: the
+  same lesson angle taken again is the signal that the mistake it documents keeps
+  happening.
+- **Priority injection**: hot entries (any kind, not only lessons) are injected first
+  in the session inventory, with a `[HOT]` marker, **outside the 1200-character
+  budget** — the budget applies to the remaining (non-hot) lines only. A recurring
+  lesson now reaches the model even when the budget is saturated by newer entries.
+- **Re-injection on save**: saving a lesson (or any entry that is hot) invalidates the
+  once-per-session injection cache through a new `onLessonSaved` callback that both
+  plugin entry points wire to the cache reset. The next turn re-injects the full
+  inventory with the hot lesson up front — no more "recorded but never re-injected at
+  the right time".
+- **Cooling at sweep**: at each automatic housekeeping sweep (boot + every 24h), an
+  anchored entry whose files are unchanged since its anchored commit loses one point
+  of heat, down to a floor of 0 (one step per sweep). Discipline that lives in the
+  code lets its lesson cool off and give the priority slot back.
+
 ## [0.15.0] - 2026-11-23
 
 ### Added

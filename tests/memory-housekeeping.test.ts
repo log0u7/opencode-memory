@@ -245,6 +245,7 @@ describe("housekeeping sweep: report", () => {
       tombstoned: [{ id: dated, title: "status", rule: "dated" }],
       deleted: [{ id: dupOld, title: "twin", rule: "duplicate" }],
       kept: 3,
+      cooled: 0,
     });
     expect(new Set(liveIds(db))).toEqual(new Set([dupNew, lesson, plain]));
     db.close();
@@ -266,7 +267,7 @@ describe("housekeeping sweep: report", () => {
 
     expect(first.tombstoned).toHaveLength(1);
     expect(first.deleted).toHaveLength(1);
-    expect(second).toEqual({ tombstoned: [], deleted: [], kept: first.kept });
+    expect(second).toEqual({ tombstoned: [], deleted: [], kept: first.kept, cooled: 0 });
     db.close();
   });
 });
