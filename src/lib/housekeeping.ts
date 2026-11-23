@@ -1,6 +1,7 @@
 import { setMeta, type MemoryDb } from "./db.js";
 import { isEntryFresh } from "./git.js";
 import { canonicalScope } from "./store.js";
+import { defaultMeshInboxDir, defaultMeshOutboxDir, syncExport, syncImport } from "./sync.js";
 
 /** Default age at which a dated entry becomes sweepable: one week. */
 export const DEFAULT_SWEEP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -127,6 +128,24 @@ export function sweepHousekeeping(
   // Stamped on every sweep (boot, daily, manual memory_sweep): the TUI sidebar
   // derives "last sweep: <age>" from this row, surviving process restarts.
   setMeta(db, "last_sweep_at", String(now));
+  return report;
+}
+
+/**
+ * The full housekeeping pass, shared by both entry points — the plugin's boot/daily
+ * cadence and the manual memory_sweep tool: sweep, then the mesh sync twins (inbox
+ * import, outbox export). One function so the two paths cannot drift: a manual sweep
+ * used to skip the sync, leaving the outbox empty until the next daily tick. The
+ * sweep stamps `last_sweep_at`; the sync dirs follow the mesh dataDir convention
+ * (overridable through XDG_DATA_HOME) and are no-ops without the mesh.
+ */
+export function runHousekeepingPass(
+  db: MemoryDb,
+  options: { scope: string; ttlMs?: number; now?: number; directory?: string },
+): HousekeepingReport {
+  const report = sweepHousekeeping(db, options);
+  syncImport(db, { inboxDir: defaultMeshInboxDir() });
+  syncExport(db, { outboxDir: defaultMeshOutboxDir(), scope: options.scope });
   return report;
 }
 

@@ -8,50 +8,40 @@
 export type ReflectionConfig = {
   enabled: boolean;
   model?: string | undefined;
-  maxLessons: number;
   transcriptChars: number;
   timeoutMs: number;
 };
 
 /** The inference-only reflection loop: a standing directive (the current model distills
- * lessons itself, no separate call) plus a per-day budget on fresh lesson saves. On by
- * default; `reflection: false` — or an object config without `enabled: true` — switches
- * the loop off, and an object config's `maxLessons` doubles as the daily budget. */
+ * lessons itself, no separate call). On by default; `reflection: false` — or an object
+ * config without `enabled: true` — switches the loop off. */
 export type ReflectionActivation = {
   enabled: boolean;
-  maxPerDay: number;
 };
 
 export function parseReflectionActivation(raw: unknown): ReflectionActivation {
   if (raw === false) {
-    return { enabled: false, maxPerDay: MAX_LESSONS_DEFAULT };
+    return { enabled: false };
   }
   if (raw !== null && typeof raw === "object") {
-    if ((raw as { enabled?: unknown }).enabled !== true) {
-      return { enabled: false, maxPerDay: MAX_LESSONS_DEFAULT };
-    }
-    return {
-      enabled: true,
-      maxPerDay: clamp(
-        (raw as { maxLessons?: unknown }).maxLessons,
-        1,
-        MAX_LESSONS_CAP,
-        MAX_LESSONS_DEFAULT,
-      ),
-    };
+    return { enabled: (raw as { enabled?: unknown }).enabled === true };
   }
-  return { enabled: true, maxPerDay: MAX_LESSONS_DEFAULT };
+  return { enabled: true };
 }
 
 /** The trigger injected next to the standing memory guidance: the agent distills the
  * lesson itself — the current model holds the correction's context, so no separate
- * model call is needed. */
-export function reflectionGuidance(maxPerDay: number): string {
+ * model call is needed. The anti-spam work is the quality bar below plus the store's
+ * replace-by-title dedup and the sweep, not a per-day cap: a burst (fresh install,
+ * new model) legitimately produces many lessons at once, and a capped one is lost
+ * for good. */
+export function reflectionGuidance(): string {
   return (
     "Reflect in-context when corrected or when an approach fails: distill the lesson yourself — " +
     "(1) the error, (2) the rule that prevents it — and save it with " +
     "memory_save(kind=lesson, paths=[the files involved]). " +
-    `At most ${maxPerDay} new lessons per day per project; refine an existing lesson (same title) instead of stacking a new one.`
+    "A lesson is a non-obvious approach that clearly failed or clearly succeeded, and why; " +
+    "refine an existing lesson (same title) instead of stacking a new one."
   );
 }
 
@@ -62,8 +52,9 @@ export type ReflectionDeps = {
   saveLesson: (title: string, body: string) => void;
 };
 
-const MAX_LESSONS_DEFAULT = 3;
-const MAX_LESSONS_CAP = 10;
+/** One reflection distills a bounded handful of lessons: a per-call cap on what the
+ * model may return, not a per-day budget (bursts are legitimate knowledge). */
+const MAX_LESSONS_PER_REFLECTION = 3;
 const TRANSCRIPT_CHARS_DEFAULT = 8000;
 const TRANSCRIPT_CHARS_MIN = 500;
 const TRANSCRIPT_CHARS_MAX = 50000;
@@ -80,7 +71,6 @@ export function parseReflectionConfig(raw: unknown): ReflectionConfig | null {
   }
   const rawConfig = raw as {
     model?: unknown;
-    maxLessons?: unknown;
     transcriptChars?: unknown;
     timeoutMs?: unknown;
   };
@@ -90,7 +80,6 @@ export function parseReflectionConfig(raw: unknown): ReflectionConfig | null {
       typeof rawConfig.model === "string" && rawConfig.model.includes("/")
         ? rawConfig.model
         : undefined,
-    maxLessons: clamp(rawConfig.maxLessons, 1, MAX_LESSONS_CAP, MAX_LESSONS_DEFAULT),
     transcriptChars: clamp(
       rawConfig.transcriptChars,
       TRANSCRIPT_CHARS_MIN,
@@ -178,11 +167,11 @@ export function createReflection(
       // hosts forward this signal to the SDK, so the abort also unblocks their own
       // cleanup (the v1 host deletes the ephemeral child session in its `finally`).
       const reply = await deps.generate(
-        distillPrompt(tail, config.maxLessons),
+        distillPrompt(tail, MAX_LESSONS_PER_REFLECTION),
         sessionID,
         AbortSignal.timeout(config.timeoutMs),
       );
-      for (const lesson of parseLessons(reply, config.maxLessons)) {
+      for (const lesson of parseLessons(reply, MAX_LESSONS_PER_REFLECTION)) {
         deps.saveLesson(lesson.title, lesson.body);
       }
     } catch {

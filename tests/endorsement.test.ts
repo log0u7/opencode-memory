@@ -188,29 +188,33 @@ describe("shareable at save", () => {
 });
 
 describe("reflection activation", () => {
-  it("is on by default with the default budget", () => {
-    expect(parseReflectionActivation(undefined)).toEqual({ enabled: true, maxPerDay: 3 });
+  it("is on by default", () => {
+    expect(parseReflectionActivation(undefined)).toEqual({ enabled: true });
   });
 
   it("reflection: false switches the loop off", () => {
-    expect(parseReflectionActivation(false)).toEqual({ enabled: false, maxPerDay: 3 });
+    expect(parseReflectionActivation(false)).toEqual({ enabled: false });
   });
 
   it("an object config without enabled: true stays off", () => {
     expect(parseReflectionActivation({ maxLessons: 7 }).enabled).toBe(false);
   });
 
-  it("an enabled object config doubles maxLessons as the daily budget", () => {
+  it("ignores a legacy maxLessons key silently", () => {
+    // The daily lesson budget is gone (0.20.1); an existing config carrying
+    // maxLessons keeps enabling reflection without error.
     expect(parseReflectionActivation({ enabled: true, maxLessons: 7 })).toEqual({
       enabled: true,
-      maxPerDay: 7,
     });
   });
 
   it("the directive names the lesson-saving contract", () => {
-    const text = reflectionGuidance(7);
+    const text = reflectionGuidance();
     expect(text).toContain("memory_save(kind=lesson");
-    expect(text).toContain("At most 7 new lessons per day");
+    // The quality bar replaces the old per-day cap: no budget language survives.
+    expect(text).toContain("clearly failed or clearly succeeded");
+    expect(text).toContain("refine an existing lesson (same title)");
+    expect(text).not.toContain("per day");
   });
 });
 

@@ -6,7 +6,7 @@ import { tool } from "@opencode-ai/plugin";
 import { openMemoryDb, type MemoryDb } from "./lib/db.js";
 import {
   HOUSEKEEPING_INTERVAL_MS,
-  sweepHousekeeping,
+  runHousekeepingPass,
   type HousekeepingReport,
 } from "./lib/housekeeping.js";
 import {
@@ -16,7 +16,6 @@ import {
   oncePerSession,
 } from "./lib/memory-ops.js";
 import { currentCommitHash } from "./lib/git.js";
-import { defaultMeshInboxDir, defaultMeshOutboxDir, syncExport, syncImport } from "./lib/sync.js";
 import {
   parseReflectionActivation,
   parseReflectionConfig,
@@ -128,18 +127,17 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
     return db;
   };
   const injected = oncePerSession();
-  // The inference-only reflection loop: the standing directive plus a per-day lesson
-  // budget (the deep-reflection config's maxLessons doubles as the budget).
+  // The inference-only reflection loop: the standing directive (the current model
+  // distills lessons itself, no separate call).
   const reflectionLoop = parseReflectionActivation(options?.reflection);
   const ops = createMemoryOps(getDb, {
     onLessonSaved: () => injected.reset(),
-    ...(reflectionLoop.enabled ? { lessonBudgetPerDay: reflectionLoop.maxPerDay } : {}),
   });
   // Request and compaction hooks carry no directory: the instance scope is the project.
   const projectScope = defaultScope(input.worktree, input.directory);
   const reflection = parseReflectionConfig(options?.reflection);
   const guidance = reflectionLoop.enabled
-    ? `${SYSTEM_GUIDANCE}\n${reflectionGuidance(reflectionLoop.maxPerDay)}`
+    ? `${SYSTEM_GUIDANCE}\n${reflectionGuidance()}`
     : SYSTEM_GUIDANCE;
   const inventoryDir = input.directory ?? input.worktree ?? process.cwd();
 
@@ -152,19 +150,12 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
       return null;
     }
     try {
-      const report = sweepHousekeeping(getDb(), {
+      return runHousekeepingPass(getDb(), {
         scope: projectScope,
         ttlMs: housekeeping.ttlMs,
         now: Date.now(),
         directory: inventoryDir,
       });
-      // The mesh inbox pass rides the same cadence: entries pushed by paired hosts
-      // since the last sweep are imported here, by the path convention in lib/sync.ts.
-      syncImport(getDb(), { inboxDir: defaultMeshInboxDir() });
-      // And the outbound twin: the scope's shareable entries land in the mesh outbox,
-      // where the mesh pusher (>= 0.12) picks them up for the paired peers.
-      syncExport(getDb(), { outboxDir: defaultMeshOutboxDir(), scope: projectScope });
-      return report;
     } catch {
       return null;
     }

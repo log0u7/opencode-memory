@@ -60,15 +60,6 @@ export class SecretDetectedError extends Error {
   }
 }
 
-/** Raised when a fresh lesson insert crosses the caller's per-day budget. Re-saves of an
- * existing title never hit it, so refining knowledge stays possible on a full budget. */
-export class LessonBudgetError extends Error {
-  constructor(readonly maxPerDay: number) {
-    super(`daily lesson budget reached (${maxPerDay}/day for this project)`);
-    this.name = "LessonBudgetError";
-  }
-}
-
 /**
  * One canonical scope string for one location. Callers hand in a worktree, a
  * directory, or both, so an entry written by either plugin entry point is found
@@ -208,7 +199,7 @@ export function save(db: MemoryDb, input: EntryInput, options: { now?: number } 
 export function saveEntry(
   db: MemoryDb,
   input: EntryInput,
-  options: { now?: number; lessonBudgetPerDay?: number } = {},
+  options: { now?: number } = {},
 ): SaveResult {
   validateEntry(input);
   const scope = canonicalScope(input.scope);
@@ -300,16 +291,6 @@ export function saveEntry(
     };
   }
 
-  // The anti-spam budget of the reflection loop gates fresh lessons only: a full
-  // budget still lets the caller refine an existing lesson under the same title.
-  if (
-    input.kind === "lesson" &&
-    options.lessonBudgetPerDay !== undefined &&
-    countLessonsCreatedSince(db, scope, utcDayStart(now)) >= options.lessonBudgetPerDay
-  ) {
-    throw new LessonBudgetError(options.lessonBudgetPerDay);
-  }
-
   const id = randomUUID();
   // A brand-new lesson starts hot-adjacent (heat 1): the first re-record tips it
   // over HOT_THRESHOLD. Other kinds start at the column default, 0.
@@ -369,23 +350,6 @@ function mergeEndorsement(endorsers: string[], input: EntryInput): string[] {
     return endorsers;
   }
   return [...endorsers, input.source];
-}
-
-/** Local midnight (UTC) of `ms`: the day window of the reflection lesson budget. */
-function utcDayStart(ms: number): number {
-  const date = new Date(ms);
-  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-}
-
-/** Fresh lessons saved in one scope since `since`, every status: the reflection budget
- * counts the day's writes, not the rows that survived later cleanups. */
-export function countLessonsCreatedSince(db: MemoryDb, scope: string, since: number): number {
-  return (
-    db.conn.get<{ n: number }>(
-      "SELECT COUNT(*) AS n FROM entries WHERE kind = 'lesson' AND scope = ? AND created_at >= ?",
-      [canonicalScope(scope), since],
-    )?.n ?? 0
-  );
 }
 
 /**

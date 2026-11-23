@@ -33,7 +33,6 @@ function deps(
 function enabled(overrides: Record<string, unknown> = {}) {
   return {
     enabled: true,
-    maxLessons: 3,
     transcriptChars: 8000,
     timeoutMs: 60000,
     ...overrides,
@@ -53,21 +52,29 @@ describe("parseReflectionConfig", () => {
     const config = parseReflectionConfig({
       enabled: true,
       model: "zhip/glm",
-      maxLessons: 99,
       transcriptChars: 1,
       timeoutMs: 1,
     });
     expect(config).toEqual({
       enabled: true,
       model: "zhip/glm",
-      maxLessons: 10,
       transcriptChars: 500,
       timeoutMs: 1000,
     });
     expect(parseReflectionConfig({ enabled: true })).toEqual({
       enabled: true,
       model: undefined,
-      maxLessons: 3,
+      transcriptChars: 8000,
+      timeoutMs: 60000,
+    });
+  });
+
+  it("ignores a legacy maxLessons key silently", () => {
+    // The daily lesson budget is gone (0.20.1): an existing config that still
+    // carries maxLessons must keep working, not error.
+    expect(parseReflectionConfig({ enabled: true, maxLessons: 99 })).toEqual({
+      enabled: true,
+      model: undefined,
       transcriptChars: 8000,
       timeoutMs: 60000,
     });
@@ -109,7 +116,7 @@ describe("parseLessons", () => {
 });
 
 describe("distillPrompt", () => {
-  it("embeds the transcript and the lesson budget", () => {
+  it("embeds the transcript and the per-call lesson cap", () => {
     const prompt = distillPrompt(TRANSCRIPT, 3);
     expect(prompt).toContain("SESSION TRANSCRIPT");
     expect(prompt).toContain(TRANSCRIPT);
@@ -120,18 +127,15 @@ describe("distillPrompt", () => {
 describe("createReflection", () => {
   it("does nothing when disabled", async () => {
     const d = deps();
-    const onIdle = createReflection(
-      { enabled: false, maxLessons: 3, transcriptChars: 8000, timeoutMs: 60000 },
-      d,
-    );
+    const onIdle = createReflection({ enabled: false, transcriptChars: 8000, timeoutMs: 60000 }, d);
     onIdle("s1");
     await flush();
     expect(d.generate).not.toHaveBeenCalled();
   });
 
-  it("distills the transcript and saves lessons with the given budget", async () => {
+  it("distills the transcript and saves the lessons the model returned", async () => {
     const d = deps();
-    const onIdle = createReflection(enabled({ maxLessons: 2 }), d);
+    const onIdle = createReflection(enabled(), d);
     onIdle("s1");
     await vi.waitFor(() => expect(d.saveLesson).toHaveBeenCalled());
     expect(d.transcript).toHaveBeenCalledWith("s1");

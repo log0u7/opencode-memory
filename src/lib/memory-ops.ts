@@ -8,7 +8,6 @@ import {
   forget,
   getById,
   HOT_THRESHOLD,
-  LessonBudgetError,
   list,
   neverRecalled,
   oldestCreated,
@@ -21,7 +20,7 @@ import {
   suggestReplacements,
   touchUsage,
 } from "./store.js";
-import { sweepHousekeeping, type HousekeepingReport } from "./housekeeping.js";
+import { runHousekeepingPass, type HousekeepingReport } from "./housekeeping.js";
 import type { Entry } from "../types/entry.js";
 
 // Optional properties accept undefined explicitly: the two SDK dialects hand raw
@@ -79,30 +78,24 @@ export type MemoryOps = {
 
 export function createMemoryOps(
   getDb: () => MemoryDb,
-  options: { onLessonSaved?: () => void; lessonBudgetPerDay?: number } = {},
+  options: { onLessonSaved?: () => void } = {},
 ): MemoryOps {
   return {
     save: (args, scope, source) =>
       run(() => {
-        const { entry, created, superseded } = saveEntry(
-          getDb(),
-          {
-            scope,
-            kind: args.kind,
-            title: args.title,
-            body: args.body,
-            tags: args.tags ?? [],
-            expires_at: args.expires_at ?? null,
-            ...(source !== undefined ? { source } : {}),
-            ...(args.paths !== undefined ? { paths: args.paths } : {}),
-            ...(args.commit_sha !== undefined ? { commit_sha: args.commit_sha } : {}),
-            ...(args.supersedes !== undefined ? { supersedes: args.supersedes } : {}),
-            ...(args.shareable !== undefined ? { shareable: args.shareable } : {}),
-          },
-          options.lessonBudgetPerDay !== undefined
-            ? { lessonBudgetPerDay: options.lessonBudgetPerDay }
-            : {},
-        );
+        const { entry, created, superseded } = saveEntry(getDb(), {
+          scope,
+          kind: args.kind,
+          title: args.title,
+          body: args.body,
+          tags: args.tags ?? [],
+          expires_at: args.expires_at ?? null,
+          ...(source !== undefined ? { source } : {}),
+          ...(args.paths !== undefined ? { paths: args.paths } : {}),
+          ...(args.commit_sha !== undefined ? { commit_sha: args.commit_sha } : {}),
+          ...(args.supersedes !== undefined ? { supersedes: args.supersedes } : {}),
+          ...(args.shareable !== undefined ? { shareable: args.shareable } : {}),
+        });
         // A lesson save (or any row that reached hot) is new priority knowledge:
         // dropping the once-per-session injection cache makes the next turn
         // re-inject the inventory with the hot entry up front.
@@ -257,7 +250,9 @@ export function createMemoryOps(
           typeof args.ttl_days === "number" && Number.isFinite(args.ttl_days) && args.ttl_days > 0
             ? Math.floor(args.ttl_days)
             : undefined;
-        const report = sweepHousekeeping(getDb(), {
+        // The same full pass the automatic boot/daily cadence runs: sweep plus the
+        // mesh sync twins, so a manual sweep never leaves the outbox behind.
+        const report = runHousekeepingPass(getDb(), {
           scope,
           ...(days !== undefined ? { ttlMs: days * DAY_MS } : {}),
           ...(options.directory !== undefined ? { directory: options.directory } : {}),
@@ -341,7 +336,7 @@ export const TOOL_DESCRIPTIONS = {
   importEntries:
     "Import memory entries from a portable JSONL file (default .opencode/memory/memory-export.jsonl). Idempotent: entries whose id already exists are skipped, secrets are rejected, and the import never supersedes local entries (a supersedes link pointing outside the file is dropped). The report names how many entries were imported and how many were skipped.",
   sweep:
-    "Run the conservative housekeeping sweep now (it also runs automatically at plugin boot and every 24h): entries carrying a dated-state marker (ISO dates, 'état:', 'state as of', 'pending', 'ETA'...) that were not updated within the TTL are tombstoned (recoverable via memory_restore for 30 days), and exact duplicates of a scope (same normalized title and body, same anchoring) are removed keeping the newest copy. Lessons, epic/task entries are protected; anchored entries are left to the anchoring rule.",
+    "Run the conservative housekeeping sweep now (it also runs automatically at plugin boot and every 24h): entries carrying a dated-state marker (ISO dates, 'état:', 'state as of', 'pending', 'ETA'...) that were not updated within the TTL are tombstoned (recoverable via memory_restore for 30 days), and exact duplicates of a scope (same normalized title and body, same anchoring) are removed keeping the newest copy. The same pass also syncs with the mesh: inbox files from paired hosts are imported and the scope's shareable entries are exported to the outbox. Lessons, epic/task entries are protected; anchored entries are left to the anchoring rule.",
 } as const;
 
 /**
@@ -460,12 +455,6 @@ function run(fn: () => string): string {
   } catch (error) {
     if (error instanceof SecretDetectedError) {
       return "refused: the content looks like a credential; secrets must never be stored in memory";
-    }
-    if (error instanceof LessonBudgetError) {
-      return (
-        `refused: ${error.message}; improve an existing lesson (re-save with the same title) ` +
-        "instead of stacking a new one"
-      );
     }
     if (error instanceof Error) {
       return `error: ${error.message}`;

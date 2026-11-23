@@ -28,6 +28,23 @@ function store() {
 }
 
 describe("memory ops", () => {
+  it("saves a burst of lessons without any daily cap", async () => {
+    // The old 3/day budget blocked legitimate bursts (fresh install, new model) and
+    // even same-title refinements; its absence is the contract now.
+    const { ops, close } = store();
+    for (let i = 1; i <= 5; i += 1) {
+      const result = ops.save(
+        { kind: "lesson", title: `burst lesson ${i}`, body: "x" },
+        "/w",
+        "reflection",
+      );
+      expect(result).toContain("created");
+      expect(result).not.toContain("refused");
+    }
+    expect(JSON.parse(ops.list({}, "/w"))).toHaveLength(5);
+    close();
+  });
+
   it("counts entries by kind for the scope plus global, ignoring expired ones", async () => {
     const { ops, getDb, close } = store();
     ops.save({ kind: "lesson", title: "lesson one", body: "x" }, "/w");
