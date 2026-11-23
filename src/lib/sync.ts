@@ -78,6 +78,12 @@ export function defaultMeshOutboxDir(): string {
   return join(dataHome, "opencode-mesh", "memory-sync", "outbox");
 }
 
+/** The mesh's own data dir (the grandparent of the sync dirs): its existence is
+ * the transport's presence test, gating the outbox export and the TUI sync line. */
+export function defaultMeshDataDir(): string {
+  return join(defaultMeshOutboxDir(), "..", "..");
+}
+
 export type SyncExportReport = {
   /** Shareable entries written this pass. */
   exported: number;

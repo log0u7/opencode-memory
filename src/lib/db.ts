@@ -37,6 +37,10 @@ CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
   INSERT INTO entries_fts(rowid, title, body, tags) VALUES (new.rowid, new.title, new.body, new.tags);
 END;
 CREATE INDEX IF NOT EXISTS entries_scope_title ON entries(scope, lower(trim(title)));
+CREATE TABLE IF NOT EXISTS metadata (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 /** Columns added after the first release. `CREATE TABLE IF NOT EXISTS` never adds a column
@@ -103,6 +107,22 @@ export function databaseSizeBytes(db: MemoryDb): number {
   const pages = db.conn.get<{ page_count: number }>("PRAGMA page_count")?.page_count ?? 0;
   const pageSize = db.conn.get<{ page_size: number }>("PRAGMA page_size")?.page_size ?? 0;
   return pages * pageSize;
+}
+
+/** One machine-global metadata row (e.g. `last_sweep_at`), read as a string.
+ * Null when the row was never written. */
+export function getMeta(db: MemoryDb, key: string): string | null {
+  return (
+    db.conn.get<{ value: string }>("SELECT value FROM metadata WHERE key = ?", [key])?.value ?? null
+  );
+}
+
+/** Upserts one machine-global metadata row. */
+export function setMeta(db: MemoryDb, key: string, value: string): void {
+  db.conn.run(
+    "INSERT INTO metadata (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    [key, value],
+  );
 }
 
 /** Backfills the columns added since a store was first created, so a database written by

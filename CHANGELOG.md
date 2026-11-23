@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-23
+
+### Added
+
+- **TUI sidebar**: a Memory slot in the sidebar (`sidebar.content`), beside the
+  existing footer, showing the memory state at a glance. Collapsed: a header
+  (`▶ Memory`, with `● N hot` when hot lessons — the priority signal — exist)
+  and one muted counts line (`N entries · N stale · N to share`; the stale
+  segment is dropped when zero). Expanded (`▼ Memory (machine-wide)`): live /
+  trashed / in-scope counts, the kind breakdown, the last housekeeping sweep
+  with its age and cooled count, and the mesh sync line (pending inbox files,
+  shareable outgoing; omitted on a mesh-less machine). Click the header or run
+  `/memory`-group "Toggle memory sidebar" to switch; the collapsed state
+  persists across restarts (raw storage domain, the same scoped-plugin-id
+  workaround as the mesh sidebar). No store yet: a single `Memory (no store)`
+  line. The snapshot is one aggregated SQL read (`buildSidebarSnapshot`) with
+  the staleness probe bounded to 200 anchored entries per tick, and the
+  formatter (`formatMemorySidebar`) is pure and unit-tested without a renderer.
+
 ## [0.19.1] - 2026-11-23
 
 ### Added
