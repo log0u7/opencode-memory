@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.7] - 2026-11-24
+
+### Fixed
+
+- **Footer size restored**: the footer reads "N Records · N MB" ("1 Record ·
+  N kB") again — 0.21.4 dropped the size along with the glyph. `formatMemoryLine`
+  returns tone segments now (count in qualifier, labels and separators in
+  value); the footer slot renders them per segment, so the numbers get the
+  qualifier tone instead of one flat muted string.
+- **Tones on the numbers, footer and collapsed**: counts and the size value
+  render in qualifier, the labels ("Records", "MB", "hot") and the " · "
+  separators in value. The collapsed one-liner splits its size and hot
+  segments the same way (`3.3` qualifier + ` MB` value, `● ` alert + `2`
+  qualifier + ` hot` value).
+- **"Records" spelled out in the collapsed one-liner**: "▶ Memory · 699
+  Records · 3.0 MB · ● 2 hot" instead of "Rec" — there is room for it, and
+  the footer already spelled it. "1 Record" singular.
+
 ## [0.21.6] - 2026-11-24
 
 ### Fixed
