@@ -12,6 +12,7 @@ import {
   neverRecalled,
   oldestCreated,
   renderEntries,
+  resolveIdPrefix,
   restore,
   saveEntry,
   search,
@@ -46,7 +47,7 @@ export type SaveArgs = {
   shareable?: boolean | undefined;
 };
 export type SearchArgs = { query: string; limit?: number | undefined };
-export type ListArgs = { limit?: number | undefined };
+export type ListArgs = { limit?: number | undefined; page?: number | undefined };
 export type GetArgs = { id: string };
 export type ForgetArgs = { id?: string | undefined; query?: string | undefined };
 export type RestoreArgs = { id: string };
@@ -69,8 +70,8 @@ export type MemoryOps = {
     source?: string,
     options?: { directory?: string },
   ) => string;
-  search: (args: SearchArgs, scope: string) => string;
-  list: (args: ListArgs, scope: string) => string;
+  search: (args: SearchArgs, scope: string, options?: { directory?: string }) => string;
+  list: (args: ListArgs, scope: string, options?: { directory?: string }) => string;
   get: (args: GetArgs) => string;
   forget: (args: ForgetArgs, scope: string) => string;
   stats: (scope: string) => string;
@@ -97,6 +98,12 @@ export function createMemoryOps(
           (args.paths !== undefined && args.paths.length > 0 && saveOptions.directory !== undefined
             ? currentCommitHash(saveOptions.directory)
             : undefined);
+        // An 8-char id prefix is accepted wherever a full id is; an unresolvable
+        // prefix keeps its original text so the store names the mistake itself.
+        const supersedes =
+          args.supersedes === undefined
+            ? undefined
+            : (resolveIdPrefix(getDb(), args.supersedes) ?? args.supersedes);
         const { entry, created, superseded } = saveEntry(getDb(), {
           scope,
           kind: args.kind,
@@ -107,7 +114,7 @@ export function createMemoryOps(
           ...(source !== undefined ? { source } : {}),
           ...(args.paths !== undefined ? { paths: args.paths } : {}),
           ...(commit_sha !== undefined ? { commit_sha: commit_sha } : {}),
-          ...(args.supersedes !== undefined ? { supersedes: args.supersedes } : {}),
+          ...(supersedes !== undefined ? { supersedes: supersedes } : {}),
           ...(args.shareable !== undefined ? { shareable: args.shareable } : {}),
         });
         // Only a row that reached HOT re-injects: rebuilding the inventory changes
@@ -142,7 +149,7 @@ export function createMemoryOps(
         }
         return text;
       }),
-    search: (args, scope) =>
+    search: (args, scope, renderOptions = {}) =>
       run(() => {
         const hits = search(getDb(), {
           query: args.query,
@@ -158,19 +165,28 @@ export function createMemoryOps(
             Date.now(),
           );
         }
-        return hits.length === 0 ? "no matching memory entries" : renderEntries(hits);
+        return hits.length === 0
+          ? "no matching memory entries"
+          : `scope ${scope} · ${hits.length} hits\n${renderEntries(hits, renderOptions)}`;
       }),
-    list: (args, scope) =>
+    list: (args, scope, renderOptions = {}) =>
       run(() => {
         const entries = list(getDb(), {
           scope,
           ...(args.limit !== undefined ? { limit: args.limit } : {}),
+          ...(args.page !== undefined ? { page: args.page } : {}),
         });
-        return entries.length === 0 ? "no memory entries" : renderEntries(entries);
+        if (entries.length === 0) {
+          return "no memory entries";
+        }
+        const page =
+          args.page !== undefined && args.page > 1 ? ` (page ${Math.trunc(args.page)})` : "";
+        return `scope ${scope} · ${entries.length} entries${page}\n${renderEntries(entries, renderOptions)}`;
       }),
     get: (args) =>
       run(() => {
-        const found = getById(getDb(), args.id);
+        const id = resolveIdPrefix(getDb(), args.id) ?? args.id;
+        const found = getById(getDb(), id);
         if (found === null) {
           return "no entry with that id";
         }
@@ -178,14 +194,14 @@ export function createMemoryOps(
           return "entry is in the trash (restorable for 30 days): use memory_restore to put it back";
         }
         // A full read serves the entry to the model, same as a search hit does.
-        touchUsage(getDb(), [args.id], Date.now());
-        return JSON.stringify(found.entry);
+        touchUsage(getDb(), [id], Date.now());
+        return renderFullEntry(found.entry);
       }),
     forget: (args, scope) =>
       run(() => {
         const removed =
           args.id !== undefined
-            ? forget(getDb(), { id: args.id, scope })
+            ? forget(getDb(), { id: resolveIdPrefix(getDb(), args.id) ?? args.id, scope })
             : args.query !== undefined
               ? forget(getDb(), { query: args.query, scope })
               : null;
@@ -221,7 +237,7 @@ export function createMemoryOps(
       }),
     restore: (args) =>
       run(() => {
-        const entry = restore(getDb(), { id: args.id });
+        const entry = restore(getDb(), { id: resolveIdPrefix(getDb(), args.id) ?? args.id });
         return entry === null
           ? "no entry with that id"
           : `restored ${JSON.stringify(entry.title)} (${entry.id})`;
@@ -232,7 +248,10 @@ export function createMemoryOps(
         if (endorser === undefined || endorser.trim().length === 0) {
           return "error: endorser required (no agent in this context)";
         }
-        const result = endorseEntry(getDb(), { id: args.id, endorser });
+        const result = endorseEntry(getDb(), {
+          id: resolveIdPrefix(getDb(), args.id) ?? args.id,
+          endorser,
+        });
         if (result === null) {
           return "error: entry not found";
         }
@@ -321,6 +340,40 @@ function renderRemoved(entries: Entry[]): string {
   return rest > 0 ? `${listed.join(", ")}, and ${rest} more` : listed.join(", ");
 }
 
+/**
+ * Full-read rendering: the body integral, then one compact metadata block. The model
+ * reads the content first; the id it will answer with, the kind, the age and the
+ * anchoring ride underneath. Fields that carry nothing (no heat, no anchoring, no
+ * supersede) take no space at all.
+ */
+function renderFullEntry(entry: Entry): string {
+  const heat = entry.heat ?? 0;
+  let text = `${entry.body}\n—\nid ${entry.id} · ${entry.kind} · ${humanAge(Date.now() - entry.updated_at)}`;
+  if (heat > 0) {
+    text += ` · heat ${heat}`;
+  }
+  if (entry.paths !== undefined && entry.paths.length > 0) {
+    text += `\npaths: ${entry.paths.join(", ")}`;
+  }
+  if (entry.supersedes !== undefined) {
+    text += `\nsupersedes ${entry.supersedes}`;
+  }
+  return text;
+}
+
+/** Compact human age: the recency signal a date string buries in digits. */
+function humanAge(ms: number): string {
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
+  const DAY = 24 * HOUR;
+  if (ms < MINUTE) return "just now";
+  if (ms < HOUR) return `${Math.floor(ms / MINUTE)}m`;
+  if (ms < DAY) return `${Math.floor(ms / HOUR)}h`;
+  if (ms < 30 * DAY) return `${Math.floor(ms / DAY)}d`;
+  if (ms < 365 * DAY) return `${Math.floor(ms / (30 * DAY))}mo`;
+  return `${Math.floor(ms / (365 * DAY))}y`;
+}
+
 function formatBytes(bytes: number): string {
   const kb = bytes / 1024;
   return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb / 1024).toFixed(1)} MB`;
@@ -333,19 +386,19 @@ const INVENTORY_HEADER = "Memory already stored for this project (lessons first,
 
 /** Tool descriptions shared by both entry points so the two hosts cannot drift. */
 export const TOOL_DESCRIPTIONS = {
-  save: "Save a durable entry to shared working memory. Never store credentials. supersedes=<id> replaces a known entry; else the result lists similar entries to replace.",
+  save: "Save a durable entry to shared working memory. Never store credentials. supersedes=<id> replaces a known entry (8-char id prefix accepted); else the result lists similar entries to replace.",
   search:
-    "Search shared working memory machine-wide: this project's scope plus global. Entries matching every query token come first, then prefix matches fill the rest.",
-  list: "List recent memory entries for a scope (default: this project), newest first.",
-  get: "Full entry by id (search results truncate to 500 chars; this returns the complete entry).",
+    "Search shared working memory machine-wide: this project's scope plus global. Entries matching every query token come first, then prefix matches fill the rest. One line per hit: <id8> <kind> <title> — <body preview>; pass the id8 (or full id) to memory_get.",
+  list: "List recent memory entries for a scope (default: this project), newest first. Same one-line-per-entry format as search, id8 first.",
+  get: "Full entry by id (8-char prefix accepted; search results truncate to 500 chars; this returns the complete entry).",
   forget:
-    "Delete entries by id (globally unique, any scope) or by query. Query deletes stay in this project's scope plus global; entries under another scope need their id or scope.",
+    "Delete entries by id (globally unique, any scope; 8-char prefix accepted) or by query. Query deletes stay in this project's scope plus global; entries under another scope need their id or scope.",
   stats:
     "Count entries by kind for this project plus global, with a total. Also names never-recalled entries (30+ days, never served): a purge proposal only, forget the unneeded ones with memory_forget.",
   restore:
-    "Put a trashed entry back, by id. memory_forget reports the ids it trashed; entries stay restorable for 30 days.",
+    "Put a trashed entry back, by id (8-char prefix accepted). memory_forget reports the ids it trashed; entries stay restorable for 30 days.",
   endorse:
-    "Mark an entry as worth sharing across hosts — one endorsement from an agent other than the author makes it shareable.",
+    "Mark an entry as worth sharing across hosts (8-char id prefix accepted) — one endorsement from an agent other than the author makes it shareable.",
   exportEntries:
     "Export a scope's entries to a portable JSONL file: versionable in git, machine-shareable, credential-like content never exported. shareable=true exports only endorsed entries (peer endorsement, or the author's own shareable:true save).",
   importEntries:

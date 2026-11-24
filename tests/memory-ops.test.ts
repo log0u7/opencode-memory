@@ -41,7 +41,7 @@ describe("memory ops", () => {
       expect(result).toContain("created");
       expect(result).not.toContain("refused");
     }
-    expect(JSON.parse(ops.list({}, "/w"))).toHaveLength(5);
+    expect(ops.list({}, "/w").split("\n")).toHaveLength(6);
     close();
   });
 
@@ -86,7 +86,7 @@ describe("memory ops", () => {
     const { ops, dbPath, getDb, close } = store();
     ops.save({ kind: "lesson", title: "check the schema first", body: "x" }, "/w", "reflection");
 
-    expect(JSON.parse(ops.list({}, "/w"))[0].source).toBe("reflection");
+    expect(list(getDb(), { scope: "/w" })[0]?.source).toBe("reflection");
     expect(await memoryInventory(getDb, dbPath, "/w")).toContain("by reflection");
     close();
   });
@@ -163,7 +163,7 @@ describe("memory ops", () => {
       ops.save({ kind: "decision", title: "Adopt batching", body: "batch 1000" }, "/w"),
     ).toMatch(/^saved [0-9a-f-]{36} \(\/w, created\)$/);
     expect(ops.search({ query: "batching" }, "/w")).toContain("Adopt batching");
-    expect(ops.list({}, "/w")).toBe(ops.search({ query: "batching" }, "/w"));
+    expect(ops.list({}, "/w")).toContain("Adopt batching");
     expect(ops.forget({ query: "batching" }, "/w")).toMatch(
       /^deleted 1 entry: "Adopt batching" \(/,
     );
@@ -199,8 +199,8 @@ describe("memory ops", () => {
       ops.save({ kind: "fact", title: `postgres note ${i}`, body: "x" }, "/w");
     }
 
-    expect(JSON.parse(ops.search({ query: "postgres", limit: 1e9 }, "/w"))).toHaveLength(50);
-    expect(JSON.parse(ops.search({ query: "postgres", limit: -1 }, "/w"))).toHaveLength(10);
+    expect(ops.search({ query: "postgres", limit: 1e9 }, "/w").split("\n")).toHaveLength(51);
+    expect(ops.search({ query: "postgres", limit: -1 }, "/w").split("\n")).toHaveLength(6);
     close();
   });
 

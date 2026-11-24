@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.5] - 2026-11-24
+
+### Changed
+
+- **Compact line output for `memory_search`, `memory_list` and `memory_get`**: the
+  JSON dump is gone — one line per hit, `<id8> <kind> <title> — <body preview>`,
+  under a single `scope <scope> · N hits` header (memory_list: `N entries`).
+  Metadata rides as a suffix only when it says something: ` · hot`, ` · stale`
+  (when the caller passes the checkout directory), the first anchored path, and
+  ` · truncated:<length>`. The PO measured 73% metadata overhead on short hits;
+  a 10-short-hit search shrank from 3563 to 1514 chars (÷2.35, ~94% payload).
+- **8-char id prefixes accepted by every id tool**: `memory_get`,
+  `memory_forget`, `memory_restore`, `memory_endorse` and `supersedes` resolve an
+  id8 (or any exact prefix) against the store — ambiguity answers with the full
+  candidate ids; full ids stay the truth in the db and remain accepted.
+- **Scope shown once in the header**, not per hit; no dates, no empty fields.
+- **`memory_list` accepts `page`** (1-based), header shows `(page N)` past the
+  first page.
+- **`DEFAULT_LIMIT` lowered: search 5, list 10** (explicit `limit` still wins).
+- **`memory_get` returns the integral body plus a compact meta block** instead of
+  JSON: `<body>\n—\nid <full-id> · <kind> · <human age> · heat <N>` plus
+  `paths: <list>` when anchored and `supersedes <id>` when present.
+
 ## [0.21.4] - 2026-11-24
 
 ### Fixed

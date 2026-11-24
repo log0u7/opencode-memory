@@ -26,13 +26,11 @@ describe("token economy", () => {
     const body = "lorem ipsum dolor sit amet ".repeat(120).slice(0, 3000);
     save(db, input({ title: "long note", body }));
 
-    const hits = JSON.parse(ops.search({ query: "long note" }, SCOPE)) as Array<
-      Record<string, unknown>
-    >;
-    expect(hits).toHaveLength(1);
-    const hit = hits[0] as { body: string; truncated?: number };
-    expect(hit.body.length).toBeLessThanOrEqual(505);
-    expect(hit.truncated).toBe(body.length);
+    const out = ops.search({ query: "long note" }, SCOPE);
+    const line = out.split("\n")[1] ?? "";
+    expect(line).toContain("truncated:3000");
+    const preview = line.slice(line.indexOf(" — ") + 3).replace(/ · truncated:\d+$/, "");
+    expect(preview.length).toBeLessThanOrEqual(505);
     db.close();
   });
 
@@ -42,12 +40,9 @@ describe("token economy", () => {
     const body = "complete but small".padEnd(300, ".");
     save(db, input({ title: "short note", body }));
 
-    const hits = JSON.parse(ops.search({ query: "short note" }, SCOPE)) as Array<
-      Record<string, unknown>
-    >;
-    const hit = hits[0] as { body: string; truncated?: number };
-    expect(hit.body).toBe(body);
-    expect(hit.truncated).toBeUndefined();
+    const line = ops.search({ query: "short note" }, SCOPE).split("\n")[1] ?? "";
+    expect(line).toMatch(/ fact short note — complete but small\.+$/);
+    expect(line).not.toContain("truncated");
     db.close();
   });
 
@@ -57,10 +52,8 @@ describe("token economy", () => {
     const body = `one two three ${"z".repeat(2000)}`;
     save(db, input({ title: "word boundary", body }));
 
-    const hits = JSON.parse(ops.search({ query: "word boundary" }, SCOPE)) as Array<
-      Record<string, unknown>
-    >;
-    const preview = (hits[0] as { body: string }).body;
+    const line = ops.search({ query: "word boundary" }, SCOPE).split("\n")[1] ?? "";
+    const preview = line.slice(line.indexOf(" — ") + 3).replace(/ · truncated:\d+$/, "");
     expect(preview.endsWith("…")).toBe(true);
     const head = preview.slice(0, -1);
     expect(body.startsWith(head)).toBe(true);
@@ -85,11 +78,10 @@ describe("token economy", () => {
       }),
     );
 
-    const full = JSON.parse(ops.get({ id: entry.id })) as Record<string, unknown>;
-    expect(full.body).toBe(body);
-    expect(full.paths).toEqual(["src/lib/store.ts"]);
-    expect(full.commit_sha).toBe("a".repeat(7));
-    expect(full.heat).toBe(1);
+    const full = ops.get({ id: entry.id });
+    expect(full.startsWith(body)).toBe(true);
+    expect(full).toContain(`\n—\nid ${entry.id} · lesson · just now · heat 1`);
+    expect(full).toContain("\npaths: src/lib/store.ts");
     db.close();
   });
 
