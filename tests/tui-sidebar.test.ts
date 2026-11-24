@@ -238,7 +238,7 @@ describe("formatMemorySidebarExpanded (v4)", () => {
         { text: " trashed", tone: "value" },
       ],
       [
-        { text: "  ☰  ", tone: "qualifier" },
+        { text: "  ≡  ", tone: "qualifier" },
         { text: "270", tone: "qualifier" },
         { text: " facts", tone: "value" },
         { text: " · ", tone: "value" },
@@ -269,7 +269,7 @@ describe("formatMemorySidebarExpanded (v4)", () => {
     expect(lines).toHaveLength(3);
     expect(lines[0]).toEqual([{ text: "▼ Memory", tone: "entity" }]);
     expect(renderLine(lines[1])).toBe("  ▤  3 live · 0 trashed");
-    expect(renderLine(lines[2])).toBe("  ☰  3 facts");
+    expect(renderLine(lines[2])).toBe("  ≡  3 facts");
   });
 
   it("shows the hot line without a sweep tail when no sweep ran yet", () => {
@@ -282,7 +282,7 @@ describe("formatMemorySidebarExpanded (v4)", () => {
   it("pluralizes singular kind counts", () => {
     const snap = { ...base, live: 1, trashed: 0, kinds: [{ kind: "lesson", count: 1 }] };
     const lines = formatMemorySidebarExpanded(snap, NOW);
-    expect(renderLine(lines[2])).toBe("  ☰  1 lesson");
+    expect(renderLine(lines[2])).toBe("  ≡  1 lesson");
   });
 
   it("packs kinds two per line, no truncation", () => {
@@ -292,10 +292,10 @@ describe("formatMemorySidebarExpanded (v4)", () => {
     const snap = { ...base, live: 55, trashed: 0, kinds, hot: 0 };
     const lines = formatMemorySidebarExpanded(snap, NOW);
     expect(lines).toHaveLength(6); // header + counts + four kind lines (2 per line)
-    expect(renderLine(lines[2])).toBe("  ☰  10 lessons · 9 facts");
-    expect(renderLine(lines[3])).toBe("  ☰  8 decisions · 7 preferences");
-    expect(renderLine(lines[4])).toBe("  ☰  6 gotchas · 5 findings");
-    expect(renderLine(lines[5])).toBe("  ☰  4 anchors");
+    expect(renderLine(lines[2])).toBe("  ≡  10 lessons · 9 facts");
+    expect(renderLine(lines[3])).toBe("  ≡  8 decisions · 7 preferences");
+    expect(renderLine(lines[4])).toBe("  ≡  6 gotchas · 5 findings");
+    expect(renderLine(lines[5])).toBe("  ≡  4 anchors");
   });
 
   it("formats human sweep ages across unit boundaries", () => {
