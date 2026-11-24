@@ -264,13 +264,15 @@ describe("syncExport", () => {
     expect(lines.every((line) => JSON.parse(line).title !== "stays local")).toBe(true);
   });
 
-  it("rewrites the whole file: un-endorsed or superseded entries leave the next push", () => {
+  it("rewrites the whole file: the tombstoned row leaves, the endorsed replacement stays", () => {
     const dataHome = meshTree();
     const kept = save({ source: "agent-a", shareable: true, title: "kept" });
     const gone = save({ source: "agent-a", shareable: true, title: "gone" });
     const outbox = join(dataHome, "opencode-mesh", "memory-sync", "outbox");
     syncExport(db, { outboxDir: outbox });
-    // supersede 'gone': a superseded row is not LIVE, so it must leave the next push
+    // supersede 'gone': the tombstoned row is not LIVE, so it must leave the next
+    // push, while the replacement carries the superseded row's endorsements (refining
+    // a shared entry must not drop it from the outbox).
     saveEntry(db, {
       scope: "/w",
       kind: "fact",
@@ -287,7 +289,7 @@ describe("syncExport", () => {
       .map((line) => JSON.parse(line).title);
     expect(titles).toContain("kept");
     expect(titles).not.toContain("gone");
-    expect(titles).not.toContain("gone v2"); // only current rows travel
+    expect(titles).toContain("gone v2"); // the replacement carries the endorsement
     expect(kept.id).toBeTruthy();
   });
 
