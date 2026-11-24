@@ -233,6 +233,35 @@ Measured on a live ~40k-token session with GLM-5.3-Flash (openrouter): the model
 - On session compaction, the plugin lists the stored entries in the compaction context and asks the compaction prompt to emit durable decisions, so the model summarises from an inventory instead of recall. With context retrieval enabled (default), the summary call is replaced entirely: see "Context retrieval" above.
 - Injections stay bounded (~1200 characters worst case) and nothing is injected, nor any store file created, when memory is unused.
 
+## TUI panel
+
+The plugin renders a `Memory` panel in OpenCode's sidebar. Click the title to collapse or expand it. Expanded:
+
+```text
+▼ Memory
+  ● 2 hot — last sweep 3h ago
+  ▤  142 live · 7 trashed
+  ☰  84 facts · 31 lessons
+  ☰  12 decisions · 8 gotchas
+  ☰  5 preferences · 2 tasks
+  ⇄  sync in 2 · out 1
+```
+
+| Line | Meaning |
+|---|---|
+| `▼ Memory` | The panel title, clickable: toggles the collapsed/expanded state. |
+| `● N hot` | Hot lessons (`heat >= 2`): recidivism, injected in priority. Line omitted at 0. |
+| `last sweep N ago` | Age of the last housekeeping pass (shown on the hot line, hidden with it). |
+| `▤ N live · N trashed` | The store: current entries vs tombstoned ones (recoverable for 30 days). |
+| `☰ N facts · N lessons` | Breakdown by kind, two per line, biggest first; extra kinds continue on the next lines. |
+| `⇄ sync in N · out N` | Cross-host sync: `in` = inbox files to import, `out` = shareables to push to peers. Line omitted without opencode-mesh. |
+
+Collapsed, the panel reduces to a one-line summary (the hot count disappears at 0):
+
+```text
+▶ Memory ● 2 hot
+```
+
 ## Development
 
 Requires Node >= 22 (mise: `mise install`) and pnpm (corepack).
