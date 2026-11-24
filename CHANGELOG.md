@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.4] - 2026-11-24
+
+### Changed
+
+- **Tool descriptions diet (−30 %)**: the 14 shared tool descriptions trimmed from
+  3771 to 2637 chars (−1134) by cutting fluff while keeping every behavioral
+  contract (30-day restore window, purge-proposal-only stats, dedup rules, mesh
+  sync pass, credential refusal, JSONL idempotency). Implemented error verbatims
+  untouched; each argument description stays a single line.
+- **TUI sidebar v4 — quota-style emphasis**: the expanded panel now follows the
+  three-tier quota grammar (entity = `theme.text` + bold, qualifier = `theme.text`,
+  value = `theme.textMuted`) instead of all-muted lines, with the PO-validated
+  single-width icon set (`●` hot attention glyph in the theme's warning/error
+  color when hot > 0, `▤` counts, `☰` kinds packed five per line, `⇄` mesh sync).
+  Zero blank lines: hot-at-0, sweep-without-metadata and mesh-less lines are
+  omitted, not padded; `wrapMode="none"` everywhere. Collapsed shape and the
+  `Memory (no store)` fallback are unchanged.
+
 ## [0.20.3] - 2026-11-24
 
 ### Fixed
