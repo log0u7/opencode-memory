@@ -48,14 +48,24 @@ describe("snapshotFromStats", () => {
 });
 
 describe("formatMemoryLine", () => {
-  it("renders entries, size and the top kinds", () => {
+  it("renders the record count without size or glyph", () => {
     const line = formatMemoryLine({
       total: 23,
       store_bytes: 1_200_000,
       top_kinds: ["decision: 12", "fact: 8"],
       all_kinds: ["decision: 12", "fact: 8"],
     });
-    expect(line).toBe("23▤ · 1.1 MB");
+    expect(line).toBe("23 Records");
+  });
+
+  it("singularizes Record for exactly one entry", () => {
+    const line = formatMemoryLine({
+      total: 1,
+      store_bytes: 4096,
+      top_kinds: ["fact: 1"],
+      all_kinds: ["fact: 1"],
+    });
+    expect(line).toBe("1 Record");
   });
 
   it("stays null for an empty store", () => {

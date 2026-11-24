@@ -210,11 +210,11 @@ describe("formatMemorySidebarCollapsed", () => {
     ]);
   });
 
-  it("renders the quota-style one-liner: Memory · N Rec · size · ● N hot", () => {
+  it("renders the quota-style one-liner: ▶ Memory · N Rec · size · ● N hot", () => {
     const snap = { ...base, live: 699, stale: 3, shareable: 5, hot: 2, store_bytes: 3_145_728 };
     expect(formatMemorySidebarCollapsed(snap)).toEqual([
       [
-        { text: "Memory", tone: "entity" },
+        { text: "▶ Memory", tone: "entity" },
         { text: " · ", tone: "value" },
         { text: "699", tone: "qualifier" },
         { text: " Rec", tone: "value" },
@@ -231,7 +231,7 @@ describe("formatMemorySidebarCollapsed", () => {
     const snap = { ...base, live: 10, stale: 0, shareable: 5, hot: 0, store_bytes: 1_048_576 };
     expect(formatMemorySidebarCollapsed(snap)).toEqual([
       [
-        { text: "Memory", tone: "entity" },
+        { text: "▶ Memory", tone: "entity" },
         { text: " · ", tone: "value" },
         { text: "10", tone: "qualifier" },
         { text: " Rec", tone: "value" },
