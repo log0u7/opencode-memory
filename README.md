@@ -245,6 +245,7 @@ The plugin renders a `Memory` panel in OpenCode's sidebar. Click the title to co
   ≡  84 facts · 31 lessons
   ≡  12 decisions · 8 gotchas
   ≡  5 preferences · 2 tasks
+  ⌗  3.0 MB
   ⇄  sync in 2 · out 1
 ```
 
@@ -255,6 +256,7 @@ The plugin renders a `Memory` panel in OpenCode's sidebar. Click the title to co
 | `sweep N ago` | Age of the last housekeeping pass (shown on the hot line, hidden with it). |
 | `▤ N live · N trashed` | The store: current entries vs tombstoned ones (recoverable for 30 days). |
 | `≡ N facts · N lessons` | Breakdown by kind, two per line, biggest first; extra kinds continue on the next lines. |
+| `⌗ N MB` | The store file size on disk: `N MB` from 1 MiB up (one decimal), `N kB` below. Line omitted when the store reads 0. |
 | `⇄ sync in N · out N` | Cross-host sync: `in` = inbox files to import, `out` = shareables to push to peers. Line omitted without opencode-mesh. |
 
 Collapsed, the panel reduces to one quota-style line (the hot count disappears at 0):
@@ -273,6 +275,7 @@ Every state and marker the panel can show, checked against `formatMemorySidebarE
 | collapsed `▶ Memory · N Records · N MB · ● N hot` | The store state plus the hot marker (omitted at 0); the size reads `N kB` below 1 MiB. The `▶` mirrors the expanded `▼` and the whole line is clickable. Numbers render in the qualifier tone, labels and separators in value. |
 | `▤ N live · N trashed` | The store: current entries vs tombstoned ones (recoverable for 30 days via `memory_restore`). |
 | `≡ N facts · N lessons · …` | The breakdown by kind (two per line, biggest first). |
+| `⌗ N MB` | The SQLite store size on disk (`N MB` from 1 MiB up, `N kB` below); line omitted at 0. |
 | `⇄ sync in N · out N` | Cross-host sync: `in` = inbox files to import, `out` = shareables to push (line omitted without opencode-mesh). |
 | `sweep N ago` (on the hot line) | Age of the last housekeeping pass. |
 | `Memory (no store)` | The store does not exist yet. |
