@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.21.0] - 2026-11-24
+
+### Added
+
+- **Collapsed sidebar and footer, one compact line each**: "▶ Memory ▤699 · 3.0 MB"
+  (+" ● N hot" when hot) and footer "memory: ▤N · size" — the duplicated word, the
+  kind breakdown and the stale/to-share segments leave the collapsed header (the
+  kind breakdown lives in the expanded panel and memory_stats). store_bytes added
+  to the sidebar snapshot.
+
 ## [0.20.9] - 2026-11-24
 
 ### Fixed
