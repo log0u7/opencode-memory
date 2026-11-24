@@ -94,6 +94,10 @@ describe("ops.save auto commit anchoring", () => {
       const id = text.split(" ")[1] ?? "";
 
       expect(getById(db, id)?.entry.commit_sha).toBeUndefined();
+      // hash-object alone would succeed outside a repository; the content
+      // stamp is tied to the commit capture (a repository), so the entry
+      // keeps its previous shape there too.
+      expect(getById(db, id)?.entry.content_hashes).toBeUndefined();
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
@@ -108,6 +112,85 @@ describe("ops.save auto commit anchoring", () => {
     const id = text.split(" ")[1] ?? "";
 
     expect(getById(db, id)?.entry.commit_sha).toBeUndefined();
+  });
+});
+
+describe("content anchoring", () => {
+  function saveAnchored(title: string, paths: string[]): Entry {
+    const ops = createMemoryOps(() => db);
+    const text = ops.save({ kind: "lesson", title, body: "b", paths }, repo, undefined, {
+      directory: repo,
+    });
+    const entry = getById(db, text.split(" ")[1] ?? "")?.entry;
+    if (entry === undefined) throw new Error("save failed");
+    return entry;
+  }
+
+  it("anchors a dirty-tree save by content and reads it fresh immediately", () => {
+    // The 0.21.3 bug: modified before commit, the entry was stale at creation.
+    writeFileSync(join(repo, "README.md"), "dirty state");
+    const entry = saveAnchored("dirty save", ["README.md"]);
+
+    expect(entry.commit_sha).toMatch(/^[0-9a-f]{7,64}$/);
+    expect(entry.content_hashes?.["README.md"]).toMatch(/^[0-9a-f]{40}$/);
+    expect(isEntryFresh(entry, repo)).toBe(true);
+  });
+
+  it("anchors an untracked file at save and reads it fresh", () => {
+    writeFileSync(join(repo, "untracked.ts"), "new content");
+    const entry = saveAnchored("untracked", ["untracked.ts"]);
+
+    expect(entry.content_hashes?.["untracked.ts"]).toMatch(/^[0-9a-f]{40}$/);
+    expect(isEntryFresh(entry, repo)).toBe(true);
+  });
+
+  it("goes stale when the anchored file changes after the save", () => {
+    writeFileSync(join(repo, "README.md"), "saved state");
+    const entry = saveAnchored("then edited", ["README.md"]);
+    expect(isEntryFresh(entry, repo)).toBe(true);
+
+    writeFileSync(join(repo, "README.md"), "changed after");
+    expect(isEntryFresh(entry, repo)).toBe(false);
+  });
+
+  it("reads fresh again when the file is reverted to the saved content", () => {
+    writeFileSync(join(repo, "README.md"), "saved state");
+    const entry = saveAnchored("reverted", ["README.md"]);
+
+    writeFileSync(join(repo, "README.md"), "moved away");
+    expect(isEntryFresh(entry, repo)).toBe(false);
+
+    writeFileSync(join(repo, "README.md"), "saved state");
+    expect(isEntryFresh(entry, repo)).toBe(true);
+  });
+
+  it("goes stale when the anchored file is deleted", () => {
+    writeFileSync(join(repo, "gone.ts"), "x");
+    const entry = saveAnchored("deleted file", ["gone.ts"]);
+    expect(isEntryFresh(entry, repo)).toBe(true);
+
+    rmSync(join(repo, "gone.ts"));
+    expect(isEntryFresh(entry, repo)).toBe(false);
+  });
+
+  it("falls back to the commit anchor when a path does not exist at save", () => {
+    const entry = saveAnchored("ghost path", ["missing.ts"]);
+
+    expect(entry.content_hashes).toBeUndefined();
+    expect(entry.commit_sha).toMatch(/^[0-9a-f]{7,64}$/);
+    expect(isEntryFresh(entry, repo)).toBe(false);
+  });
+
+  it("keeps the commit check for entries anchored by commit only", () => {
+    // Backward compat: no content_hashes, the 0.11.0 commit-vs-worktree check rules.
+    const commit = commitFile("src/a.ts", "v1");
+    const entry = anchoredEntry(commit, ["src/a.ts"]);
+
+    writeFileSync(join(repo, "src/a.ts"), "v2");
+    expect(isEntryFresh(entry, repo)).toBe(false);
+
+    writeFileSync(join(repo, "src/a.ts"), "v1");
+    expect(isEntryFresh(entry, repo)).toBe(true);
   });
 });
 

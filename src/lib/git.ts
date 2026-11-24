@@ -5,10 +5,13 @@ import { resolve } from "node:path";
 import type { Entry } from "../types/entry.js";
 
 // Code anchoring for memory entries: the commit a save was made against and the
-// files it documents. An anchored entry is stale when any of its paths changed
-// since that commit (or is untracked) — the same rule workflow-guard applies.
-// All checks are synchronous and bounded (2 s timeout, a handful of entries):
-// the inventory builder runs inside sync host hooks.
+// files it documents. Since 0.21.6 the anchor stamp also carries the git blob
+// hash of each path's content at save time: freshness is then content equality,
+// so a save made on a dirty tree (agent edited files, not committed yet) or on
+// an untracked file is fresh at creation and stale only when a file really
+// changes. Entries without content hashes keep the 0.11.0 commit-vs-worktree
+// check. All checks are synchronous and bounded (2 s timeout, a handful of
+// entries): the inventory builder runs inside sync host hooks.
 
 /** The repository HEAD commit, or undefined outside a repository / on failure. */
 export function currentCommitHash(directory: string): string | undefined {
@@ -40,15 +43,52 @@ function gitStatus(root: string, args: string[]): { status: number; stdout: stri
   }
 }
 
-/** Fresh when the anchored paths are unchanged since the anchored commit — none
- * of them is untracked, and none of them is missing (an entry documenting a
- * deleted file is stale). Unanchored entries (no paths or no commit) are always
- * fresh: nothing observable contradicts them. */
+/** Git blob hashes of the given paths' current content, keyed by path. One
+ * bounded subprocess for all paths (`git hash-object -- <p1..pN>`, order kept).
+ * Undefined when any path is missing (hash-object fails as a whole) or the
+ * directory is not a repository: content anchoring then falls back to the
+ * commit stamp, whose own check treats a missing path as stale. */
+export function contentHashes(
+  directory: string,
+  paths: string[],
+): Record<string, string> | undefined {
+  if (paths.length === 0) return undefined;
+  const result = gitStatus(resolve(directory), ["hash-object", "--", ...paths]);
+  if (result.status !== 0) return undefined;
+  const lines = result.stdout.split("\n").filter((line) => /^[0-9a-f]{40}$/.test(line));
+  if (lines.length !== paths.length) return undefined;
+  const hashes: Record<string, string> = {};
+  for (const [index, path] of paths.entries()) {
+    const hash = lines[index];
+    if (hash === undefined) return undefined;
+    hashes[path] = hash;
+  }
+  return hashes;
+}
+
+/** Fresh when the anchored paths still hold the content the entry was saved
+ * against (content_hashes present: every path re-hashes to its saved blob) —
+ * the working tree may be dirty and the paths untracked, only the bytes count,
+ * and a missing path is stale. Without content hashes, the 0.11.0 check rules:
+ * fresh when the anchored paths are unchanged since the anchored commit — none
+ * of them is untracked, and none of them is missing. Unanchored entries (no
+ * paths) are always fresh: nothing observable contradicts them. */
 export function isEntryFresh(
-  entry: { commit_sha?: string | undefined; paths?: string[] | undefined },
+  entry: {
+    commit_sha?: string | undefined;
+    paths?: string[] | undefined;
+    content_hashes?: Record<string, string> | undefined;
+  },
   directory: string,
 ): boolean {
-  if (!entry.commit_sha || !entry.paths || entry.paths.length === 0) return true;
+  if (!entry.paths || entry.paths.length === 0) return true;
+  const saved = entry.content_hashes;
+  if (saved !== undefined && Object.keys(saved).length > 0) {
+    const current = contentHashes(directory, entry.paths);
+    if (current === undefined) return false;
+    return entry.paths.every((path) => current[path] === saved[path]);
+  }
+  if (!entry.commit_sha) return true;
   if (!/^[0-9a-f]{7,64}$/i.test(entry.commit_sha)) return false;
   const root = resolve(directory);
   // A missing anchored path is stale: the entry documents a deleted file.

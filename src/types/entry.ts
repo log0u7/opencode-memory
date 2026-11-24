@@ -19,6 +19,11 @@ export type Entry = {
   paths?: string[];
   /** The repository commit the entry was written against (auto-resolved at save). */
   commit_sha?: string;
+  /** Git blob hashes (git hash-object) of the anchored paths at save time. Present
+   * = freshness is content equality: every path must still hash to its saved blob,
+   * whatever the commit or index state (works on dirty trees and untracked files).
+   * Absent = the 0.11.0 commit-vs-worktree check. */
+  content_hashes?: Record<string, string>;
   /** Id of the entry this one replaces. The replaced row stays as a superseded
    * tombstone, hidden from every read, restorable through memory_restore. */
   supersedes?: string;
@@ -53,6 +58,8 @@ export type EntryInput = {
   source?: string;
   paths?: string[];
   commit_sha?: string;
+  /** Anchor stamp captured at save: git blob hash of each anchored path's content. */
+  content_hashes?: Record<string, string>;
   /** The entry this one replaces (saveEntry validates and marks the old row). */
   supersedes?: string;
   /** Publish without peer endorsement: the author vouches, and the save records the

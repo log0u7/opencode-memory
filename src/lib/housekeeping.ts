@@ -46,6 +46,7 @@ type Candidate = {
   updated_at: number;
   paths: string | null;
   commit_sha: string | null;
+  content_hashes: string | null;
   heat: number;
 };
 
@@ -113,6 +114,7 @@ export function sweepHousekeeping(
         {
           commit_sha: candidate.commit_sha ?? undefined,
           paths: parsedPaths(candidate.paths),
+          content_hashes: parsedHashes(candidate.content_hashes),
         },
         options.directory,
       );
@@ -153,7 +155,7 @@ export function runHousekeepingPass(
 
 function candidates(db: MemoryDb, scope: string, now: number): Candidate[] {
   return db.conn.all<Candidate>(
-    `SELECT id, scope, kind, title, body, created_at, updated_at, paths, commit_sha, heat FROM entries
+    `SELECT id, scope, kind, title, body, created_at, updated_at, paths, commit_sha, content_hashes, heat FROM entries
      WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?) AND ${LIVE_CURRENT}
      ORDER BY created_at ASC, id ASC`,
     [scope, now],
@@ -189,6 +191,29 @@ function parsedPaths(raw: string | null): string[] {
   }
 }
 
+/** Content stamp column decoded leniently: only 40-hex values survive, a
+ * malformed blob reads as absent (the commit-only check then rules). */
+function parsedHashes(raw: string | null): Record<string, string> | undefined {
+  if (raw === null) {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const hashes: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "string" && /^[0-9a-f]{40}$/.test(value)) {
+        hashes[key] = value;
+      }
+    }
+    return Object.keys(hashes).length > 0 ? hashes : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Groups of exact duplicates: same scope, same normalized title (lower+trim),
  * same normalized body (trim+collapsed whitespace), same anchoring. Distinct
@@ -207,6 +232,7 @@ function duplicateGroups(candidates: Candidate[]): Candidate[][] {
       candidate.body.trim().replace(/\s+/g, " "),
       parsedPaths(candidate.paths),
       candidate.commit_sha,
+      candidate.content_hashes,
     ]);
     const group = groups.get(key);
     if (group === undefined) {

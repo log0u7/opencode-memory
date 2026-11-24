@@ -57,6 +57,7 @@ const ADDED_COLUMNS = [
   "last_used INTEGER",
   "heat INTEGER NOT NULL DEFAULT 0",
   "endorsed_by TEXT",
+  "content_hashes TEXT",
 ];
 
 // SECURITY.md promises restrictive permissions whatever the user's umask is, so the

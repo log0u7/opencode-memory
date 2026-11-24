@@ -16,25 +16,34 @@ import type { MemorySidebarSnapshot } from "../rpc.js";
 export const SIDEBAR_STALE_CAP = 200;
 
 /**
- * Freshness verdicts cached per process: one anchored entry costs 2 git
- * subprocesses per probe (`diff` + `ls-files`), and an active session
- * re-probes up to SIDEBAR_STALE_CAP entries on every event gap. The key
- * carries the observed state of every anchored path (mtimeMs + size, or
- * "missing"), so a cache hit still reflects the current working tree: an edit
- * moves mtime, a delete moves existence, the anchored (commit, paths) stamp
- * moves when the entry is re-saved. shortcut: mtime+size fingerprint, not a
- * content hash — a same-mtime same-size edit slips through until the next
- * observable change; upgrade if that ever matters in practice.
+ * Freshness verdicts cached per process: one anchored entry costs a git
+ * subprocess per probe (one `hash-object` for content-anchored entries, `diff`
+ * + `ls-files` for commit-only ones), and an active session re-probes up to
+ * SIDEBAR_STALE_CAP entries on every event gap. The key carries the anchor
+ * stamp (commit + content hashes) plus the observed state of every anchored
+ * path (mtimeMs + size, or "missing"), so a cache hit still reflects the
+ * current working tree: an edit moves mtime, a delete moves existence, and a
+ * re-saved entry moves the stamp. shortcut: mtime+size fingerprint, not a
+ * content hash — the re-hash is skipped while mtime+size are unchanged (a
+ * same-mtime same-size edit slips through until the next observable change;
+ * verified reasonable: `git hash-object` output depends only on bytes, and a
+ * byte change without mtime or size movement has never been observed in
+ * practice). Upgrade if that ever matters.
  */
 const FRESH_CACHE_MAX = 10_000;
 
 const freshVerdicts = new Map<string, boolean>();
 
-/** Cache key for one anchored entry: the git stamp plus what the probe would
+/** Cache key for one anchored entry: the anchor stamp plus what the probe would
  * observe of each path right now. `\0` separators keep lists unambiguous. */
-function freshKey(commitSha: string, paths: string[], directory: string): string {
+function freshKey(
+  commitSha: string,
+  paths: string[],
+  hashes: Record<string, string> | undefined,
+  directory: string,
+): string {
   const root = resolve(directory);
-  const parts = [root, commitSha];
+  const parts = [root, commitSha, JSON.stringify(hashes ?? {})];
   for (const path of paths) {
     parts.push(path);
     try {
@@ -47,11 +56,38 @@ function freshKey(commitSha: string, paths: string[], directory: string): string
   return parts.join("\0");
 }
 
+/** Content stamp column decoded leniently: only 40-hex values survive, a
+ * malformed blob reads as absent (the commit-only check then rules). */
+function parseHashes(raw: string | null): Record<string, string> | undefined {
+  if (raw === null) {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const hashes: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "string" && /^[0-9a-f]{40}$/.test(value)) {
+        hashes[key] = value;
+      }
+    }
+    return Object.keys(hashes).length > 0 ? hashes : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function cachedFreshness(
-  entry: { commit_sha: string; paths: string[] },
+  entry: {
+    commit_sha: string;
+    paths: string[];
+    content_hashes?: Record<string, string> | undefined;
+  },
   directory: string,
 ): boolean {
-  const key = freshKey(entry.commit_sha, entry.paths, directory);
+  const key = freshKey(entry.commit_sha, entry.paths, entry.content_hashes, directory);
   const hit = freshVerdicts.get(key);
   if (hit !== undefined) {
     // Refresh recency so eviction drops cold entries first.
@@ -148,8 +184,12 @@ export function buildSidebarSnapshot(
 
   let stale = 0;
   if (options.directory !== undefined) {
-    const anchored = db.conn.all<{ paths: string; commit_sha: string }>(
-      `SELECT paths, commit_sha FROM entries
+    const anchored = db.conn.all<{
+      paths: string;
+      commit_sha: string;
+      content_hashes: string | null;
+    }>(
+      `SELECT paths, commit_sha, content_hashes FROM entries
        WHERE (scope = ? OR scope = 'global') AND paths IS NOT NULL AND paths != '[]'
          AND commit_sha IS NOT NULL AND ${CURRENT_LIVE}
        ORDER BY updated_at DESC LIMIT ?`,
@@ -168,7 +208,16 @@ export function buildSidebarSnapshot(
       if (paths.length === 0) {
         continue;
       }
-      if (!cachedFreshness({ commit_sha: row.commit_sha, paths }, options.directory)) {
+      if (
+        !cachedFreshness(
+          {
+            commit_sha: row.commit_sha,
+            paths,
+            content_hashes: parseHashes(row.content_hashes),
+          },
+          options.directory,
+        )
+      ) {
         stale += 1;
       }
     }
