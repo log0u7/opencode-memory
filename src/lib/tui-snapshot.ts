@@ -1,4 +1,5 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { getMeta, type MemoryDb } from "./db.js";
 import { isEntryFresh } from "./git.js";
@@ -6,13 +7,72 @@ import { HOT_THRESHOLD } from "./store.js";
 import type { MemorySidebarSnapshot } from "../rpc.js";
 
 /**
- * Bound on the anchored entries probed for staleness per snapshot: every probe
- * spawns git subprocesses, and the sidebar refreshes on a poll plus every host
- * event. Entries beyond the cap (most recently updated first) are not probed
- * this tick. shortcut: a cap is a count floor, not a ceiling — real stores hold
- * hundreds of entries; cache per (commit, paths, directory) if they grow past it.
+ * Bound on the anchored entries probed for staleness per snapshot: the probe
+ * costs one `statSync` per anchored path, and the sidebar refreshes on a poll
+ * plus every host event. Entries beyond the cap (most recently updated first)
+ * are not probed this tick. Verdicts are cached below, so the cap bounds the
+ * stat work, not git subprocesses.
  */
 export const SIDEBAR_STALE_CAP = 200;
+
+/**
+ * Freshness verdicts cached per process: one anchored entry costs 2 git
+ * subprocesses per probe (`diff` + `ls-files`), and an active session
+ * re-probes up to SIDEBAR_STALE_CAP entries on every event gap. The key
+ * carries the observed state of every anchored path (mtimeMs + size, or
+ * "missing"), so a cache hit still reflects the current working tree: an edit
+ * moves mtime, a delete moves existence, the anchored (commit, paths) stamp
+ * moves when the entry is re-saved. shortcut: mtime+size fingerprint, not a
+ * content hash — a same-mtime same-size edit slips through until the next
+ * observable change; upgrade if that ever matters in practice.
+ */
+const FRESH_CACHE_MAX = 10_000;
+
+const freshVerdicts = new Map<string, boolean>();
+
+/** Cache key for one anchored entry: the git stamp plus what the probe would
+ * observe of each path right now. `\0` separators keep lists unambiguous. */
+function freshKey(commitSha: string, paths: string[], directory: string): string {
+  const root = resolve(directory);
+  const parts = [root, commitSha];
+  for (const path of paths) {
+    parts.push(path);
+    try {
+      const stat = statSync(resolve(root, path));
+      parts.push(`${stat.mtimeMs}:${stat.size}`);
+    } catch {
+      parts.push("missing");
+    }
+  }
+  return parts.join("\0");
+}
+
+function cachedFreshness(
+  entry: { commit_sha: string; paths: string[] },
+  directory: string,
+): boolean {
+  const key = freshKey(entry.commit_sha, entry.paths, directory);
+  const hit = freshVerdicts.get(key);
+  if (hit !== undefined) {
+    // Refresh recency so eviction drops cold entries first.
+    freshVerdicts.delete(key);
+    freshVerdicts.set(key, hit);
+    return hit;
+  }
+  const verdict = isEntryFresh(entry, directory);
+  freshVerdicts.set(key, verdict);
+  if (freshVerdicts.size > FRESH_CACHE_MAX) {
+    freshVerdicts.delete(freshVerdicts.keys().next().value as string);
+  }
+  return verdict;
+}
+
+/** Test surface for the freshness cache: production code always goes through
+ * buildSidebarSnapshot; tests reach the probe and its live size directly. */
+export const freshCache = {
+  probe: cachedFreshness,
+  size: () => freshVerdicts.size,
+};
 
 /** Usable rows only: current, not trashed, not expired. Superseded tombstones
  * are neither live nor trashed — the sidebar counts what a read could return. */
@@ -108,7 +168,7 @@ export function buildSidebarSnapshot(
       if (paths.length === 0) {
         continue;
       }
-      if (!isEntryFresh({ commit_sha: row.commit_sha, paths }, options.directory)) {
+      if (!cachedFreshness({ commit_sha: row.commit_sha, paths }, options.directory)) {
         stale += 1;
       }
     }
