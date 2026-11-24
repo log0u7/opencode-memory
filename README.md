@@ -256,10 +256,11 @@ The plugin renders a `Memory` panel in OpenCode's sidebar. Click the title to co
 | `☰ N facts · N lessons` | Breakdown by kind, two per line, biggest first; extra kinds continue on the next lines. |
 | `⇄ sync in N · out N` | Cross-host sync: `in` = inbox files to import, `out` = shareables to push to peers. Line omitted without opencode-mesh. |
 
-Collapsed, the panel reduces to a one-line summary (the hot count disappears at 0):
+Collapsed, the panel reduces to a two-line summary (the hot count disappears at 0):
 
 ```text
-▶ Memory ● 2 hot
+▶ Memory
+142 entries · 1 to share
 ```
 
 ## Development
