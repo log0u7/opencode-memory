@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { getMeta, type MemoryDb } from "./db.js";
+import { databaseSizeBytes, getMeta, type MemoryDb } from "./db.js";
 import { isEntryFresh } from "./git.js";
 import { HOT_THRESHOLD } from "./store.js";
 import type { MemorySidebarSnapshot } from "../rpc.js";
@@ -178,6 +178,7 @@ export function buildSidebarSnapshot(
   const lastSweepMs = lastSweep === null ? null : Number(lastSweep);
   return {
     store: true,
+    store_bytes: databaseSizeBytes(db),
     live,
     trashed,
     kinds,

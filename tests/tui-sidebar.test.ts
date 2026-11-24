@@ -190,17 +190,14 @@ describe("formatMemorySidebarCollapsed", () => {
     expect(formatMemorySidebarCollapsed(noStoreSidebar())).toEqual(["Memory (no store)"]);
   });
 
-  it("renders the collapsed two-line shape with the hot marker", () => {
-    const snap = { ...base, live: 10, stale: 3, shareable: 5, hot: 2 };
-    expect(formatMemorySidebarCollapsed(snap)).toEqual([
-      "▶ Memory ● 2 hot",
-      "10 entries · 3 stale · 5 to share",
-    ]);
+  it("renders the collapsed one-line shape with hot and store size", () => {
+    const snap = { ...base, live: 10, stale: 3, shareable: 5, hot: 2, store_bytes: 3_145_728 };
+    expect(formatMemorySidebarCollapsed(snap)).toEqual(["▶ Memory ▤10 · 3.0 MB ● 2 hot"]);
   });
 
-  it("drops the hot marker and the stale segment when they are zero", () => {
-    const snap = { ...base, live: 10, stale: 0, shareable: 5, hot: 0 };
-    expect(formatMemorySidebarCollapsed(snap)).toEqual(["▶ Memory", "10 entries · 5 to share"]);
+  it("drops the hot marker when it is zero", () => {
+    const snap = { ...base, live: 10, stale: 0, shareable: 5, hot: 0, store_bytes: 1_048_576 };
+    expect(formatMemorySidebarCollapsed(snap)).toEqual(["▶ Memory ▤10 · 1.0 MB"]);
   });
 });
 
