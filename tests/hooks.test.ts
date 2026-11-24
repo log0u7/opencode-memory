@@ -100,7 +100,7 @@ describe("memory plugin hooks", () => {
     await hooks.dispose?.();
   });
 
-  it("injects the inventory once per session on the first request that has entries", async () => {
+  it("re-injects the same inventory on every request of a session (stable prefix)", async () => {
     const dbPath = join(dir, "inject.db");
     const hooks = await MemoryPlugin(fakeInput(), { dbPath });
     const transform = hooks["experimental.chat.system.transform"];
@@ -109,21 +109,61 @@ describe("memory plugin hooks", () => {
       ctx(),
     );
 
-    const output = { system: ["base"] };
-    await transform?.({ sessionID: "s1", model: {} as never }, output);
-    expect(output.system).toHaveLength(3);
-    expect(output.system[2]).toContain("Adopt batching");
+    const first = { system: ["base"] };
+    await transform?.({ sessionID: "s1", model: {} as never }, first);
+    expect(first.system).toHaveLength(3);
+    expect(first.system[2]).toContain("Adopt batching");
 
-    // Same session again: guidance repeats per request, the inventory does not.
-    await transform?.({ sessionID: "s1", model: {} as never }, output);
-    expect(output.system).toHaveLength(4);
-    expect(output.system[3]).toContain("memory_search");
-    expect(output.system[3]).not.toContain("Adopt batching");
+    // The host rebuilds the system prompt per call: the next request must carry a
+    // byte-identical block, or the prompt cache misses from that point on.
+    await hooks.tool?.memory_save?.execute(
+      { kind: "fact", title: "Later entry", body: "x" },
+      ctx(),
+    );
+    const second = { system: ["base"] };
+    await transform?.({ sessionID: "s1", model: {} as never }, second);
+    expect(second.system).toEqual(first.system);
 
-    // A new session gets its own inventory.
-    await transform?.({ sessionID: "s2", model: {} as never }, output);
-    expect(output.system).toHaveLength(6);
-    expect(output.system[5]).toContain("Adopt batching");
+    // A new session gets its own, fresh inventory.
+    const third = { system: ["base"] };
+    await transform?.({ sessionID: "s2", model: {} as never }, third);
+    expect(third.system[2]).toContain("Later entry");
+    await hooks.dispose?.();
+  });
+
+  it("does not rebuild a live session's inventory when an ordinary lesson is saved", async () => {
+    const dbPath = join(dir, "lesson.db");
+    const hooks = await MemoryPlugin(fakeInput(), { dbPath });
+    const transform = hooks["experimental.chat.system.transform"];
+    await hooks.tool?.memory_save?.execute({ kind: "fact", title: "seed", body: "x" }, ctx());
+
+    const first = { system: ["base"] };
+    await transform?.({ sessionID: "s1", model: {} as never }, first);
+    await hooks.tool?.memory_save?.execute(
+      { kind: "lesson", title: "new lesson", body: "x" },
+      ctx(),
+    );
+    const second = { system: ["base"] };
+    await transform?.({ sessionID: "s1", model: {} as never }, second);
+    expect(second.system).toEqual(first.system);
+    await hooks.dispose?.();
+  });
+
+  it("rebuilds a live session's inventory when a save reaches HOT (rare récidive)", async () => {
+    const dbPath = join(dir, "hot.db");
+    const hooks = await MemoryPlugin(fakeInput(), { dbPath });
+    const transform = hooks["experimental.chat.system.transform"];
+    await hooks.tool?.memory_save?.execute({ kind: "lesson", title: "seed", body: "x" }, ctx());
+
+    const first = { system: ["base"] };
+    await transform?.({ sessionID: "s1", model: {} as never }, first);
+    // Second save of the same title: the row reaches the heat threshold.
+    await hooks.tool?.memory_save?.execute({ kind: "lesson", title: "seed", body: "x" }, ctx());
+    const second = { system: ["base"] };
+    await transform?.({ sessionID: "s1", model: {} as never }, second);
+    // The rebuild changes the inventory content (the hot entry rides up front) —
+    // the cache miss is the price of the priority injection, paid rarely.
+    expect(second.system).not.toEqual(first.system);
     await hooks.dispose?.();
   });
 
@@ -139,18 +179,19 @@ describe("memory plugin hooks", () => {
     await hooks.dispose?.();
   });
 
-  it("injects once per instance when the session id is missing", async () => {
+  it("keeps one sticky inventory per instance when the session id is missing", async () => {
     const dbPath = join(dir, "unknown.db");
     const hooks = await MemoryPlugin(fakeInput(), { dbPath });
     const transform = hooks["experimental.chat.system.transform"];
     await hooks.tool?.memory_save?.execute({ kind: "fact", title: "WAL again", body: "x" }, ctx());
 
-    const output = { system: ["base"] };
-    await transform?.({ model: {} as never }, output);
-    await transform?.({ model: {} as never }, output);
+    const a = { system: ["base"] };
+    const b = { system: ["base"] };
+    await transform?.({ model: {} as never }, a);
+    await transform?.({ model: {} as never }, b);
 
-    const inventories = output.system.filter((s) => s.includes("WAL again"));
-    expect(inventories).toHaveLength(1);
+    expect(a.system[2]).toContain("WAL again");
+    expect(b.system).toEqual(a.system);
     await hooks.dispose?.();
   });
 
@@ -169,13 +210,13 @@ describe("memory plugin hooks", () => {
     await transform?.({ sessionID: "first", model: {} as never }, output);
     expect(count(output.system)).toBe(1);
 
-    // Overflow the key set: the bookkeeping clears, so tracking starts over.
+    // Overflow the key set: only the oldest session is evicted, never the whole cache.
     for (let i = 0; i < 512; i++) {
       await transform?.({ sessionID: `s-${i}`, model: {} as never }, output);
     }
     expect(count(output.system)).toBe(513);
 
-    // The first session is tracked again after the clear, so it reinjects once more.
+    // The evicted first session gets a recomputed inventory on its next request.
     await transform?.({ sessionID: "first", model: {} as never }, output);
     expect(count(output.system)).toBe(514);
     await hooks.dispose?.();

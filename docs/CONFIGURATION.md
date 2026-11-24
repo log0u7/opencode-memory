@@ -19,6 +19,23 @@ Options for the `@log0u7/opencode-memory` plugin, set on the plugin entry in `op
 | `housekeeping` | `true` | Conservative sweep at boot and every 24h: dated entries past the TTL become tombstones, exact duplicates are dropped. |
 | `sweepTtlDays` | `7` | Days after which a dated entry becomes sweepable. `0` or less falls back to the default instead of sweeping fresh entries. |
 | `retrieval` | see below | Transcript retrieval and retention, see below. |
+| `caveman` | `"auto"` | Terse guidance and terse entries when caveman is installed. `"auto"` detects it, `true` forces it, `false` disables it. See below. |
+
+## Caveman
+
+[caveman](https://github.com/JuliusBrussee/caveman) makes the agent answer in a compressed register. When it is present, the plugin uses a terse system guidance and compaction prompt, and asks the agent to write memory entries caveman-terse (no articles, filler or hedging; code, paths, identifiers, commands, numbers and error text stay exact). Every stored title and body is read again on each recall, so a shorter entry saves tokens in every later session. When caveman is absent, the plain guidance is used and nothing mentions caveman.
+
+With `"auto"` (default), any of these signals counts as installed:
+
+| Signal | Written by |
+| --- | --- |
+| `<config>/.caveman-active` (mode flag, removed by `/caveman off`) | upstream OpenCode plugin |
+| `<!-- caveman-begin -->` block in `<config>/AGENTS.md`, or in the project's `AGENTS.md` / `.opencode/AGENTS.md` | upstream installer (`--only opencode`, `--with-init`) |
+| a `plugin` entry containing `caveman` or `caveopen` in `<config>/opencode.json(c)` or the project's `opencode.json(c)` | upstream plugin and third-party ports (`opencode-caveman`, `@mumme-it/opencode-caveman`, `caveman-opencode-plugin`, `caveopen`...) |
+
+`<config>` follows OpenCode's own resolution: `$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`.
+
+Detection runs once, when the plugin starts: the guidance is part of the cached prompt prefix and must not flip in the middle of a session. Restart OpenCode after installing or removing caveman. The upstream always-on rules in `AGENTS.md` stay loaded after `/caveman off`, so the terse memory guidance stays on as well; set `"caveman": false` to opt out.
 
 ## LLM reflection (legacy, opt-in)
 

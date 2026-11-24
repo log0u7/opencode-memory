@@ -13,8 +13,9 @@ import {
   TOOL_DESCRIPTIONS,
   createMemoryOps,
   memoryInventory,
-  oncePerSession,
+  stickyPerSession,
 } from "./lib/memory-ops.js";
+import { resolveCaveman } from "./lib/caveman.js";
 import { currentCommitHash } from "./lib/git.js";
 import {
   parseReflectionActivation,
@@ -25,10 +26,12 @@ import {
 } from "./lib/reflection.js";
 import {
   COMPACTION_CONTEXT,
+  COMPACTION_CONTEXT_CAVEMAN,
   defaultDbPath,
   defaultScope,
   parseHousekeepingConfig,
   SYSTEM_GUIDANCE,
+  SYSTEM_GUIDANCE_CAVEMAN,
   type PluginOptions,
 } from "./options.js";
 
@@ -126,19 +129,27 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
     db ??= openMemoryDb(dbPath);
     return db;
   };
-  const injected = oncePerSession();
+  const injected = stickyPerSession();
   // The inference-only reflection loop: the standing directive (the current model
   // distills lessons itself, no separate call).
   const reflectionLoop = parseReflectionActivation(options?.reflection);
   const ops = createMemoryOps(getDb, {
+    // Only a HOT save (heat >= threshold, a rare récidive) resets the injected
+    // inventory: the next turn re-injects with the hot entry up front. Ordinary
+    // lessons keep the system prefix byte-stable (prompt-cache hits) and reach
+    // live sessions through memory_search.
     onLessonSaved: () => injected.reset(),
   });
   // Request and compaction hooks carry no directory: the instance scope is the project.
   const projectScope = defaultScope(input.worktree, input.directory);
   const reflection = parseReflectionConfig(options?.reflection);
+  // Read once at boot so the guidance, part of the cached prefix, never flips mid-session.
+  const caveman = resolveCaveman(options?.caveman, input.directory ?? input.worktree);
+  const baseGuidance = caveman ? SYSTEM_GUIDANCE_CAVEMAN : SYSTEM_GUIDANCE;
+  const compactionContext = caveman ? COMPACTION_CONTEXT_CAVEMAN : COMPACTION_CONTEXT;
   const guidance = reflectionLoop.enabled
-    ? `${SYSTEM_GUIDANCE}\n${reflectionGuidance()}`
-    : SYSTEM_GUIDANCE;
+    ? `${baseGuidance}\n${reflectionGuidance()}`
+    : baseGuidance;
   const inventoryDir = input.directory ?? input.worktree ?? process.cwd();
 
   // Conservative automatic housekeeping: once at boot, then daily. A missing store
@@ -381,7 +392,7 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
       }
     },
     "experimental.session.compacting": async (_input, output) => {
-      output.context.push(COMPACTION_CONTEXT);
+      output.context.push(compactionContext);
       if (disposed) {
         return;
       }

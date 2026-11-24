@@ -13,8 +13,9 @@ import {
   TOOL_DESCRIPTIONS,
   createMemoryOps,
   memoryInventory,
-  oncePerSession,
+  stickyPerSession,
 } from "./lib/memory-ops.js";
+import { resolveCaveman } from "./lib/caveman.js";
 import { currentCommitHash } from "./lib/git.js";
 import { createDurableStore } from "./lib/persist.js";
 import { defaultMeshDataDir, defaultMeshInboxDir } from "./lib/sync.js";
@@ -23,7 +24,9 @@ import { createReflection, parseReflectionConfig } from "./lib/reflection.js";
 import { parseReflectionActivation, reflectionGuidance } from "./lib/reflection.js";
 import {
   SYSTEM_GUIDANCE,
+  SYSTEM_GUIDANCE_CAVEMAN,
   COMPACTION_CONTEXT,
+  COMPACTION_CONTEXT_CAVEMAN,
   defaultScope,
   defaultDbPath,
   parseHousekeepingConfig,
@@ -92,14 +95,22 @@ export const MemoryV2 = Plugin.define({
       db ??= openMemoryDb(dbPath);
       return db;
     };
-    const injected = oncePerSession();
+    const injected = stickyPerSession();
     // The inference-only reflection loop: the standing directive (the current model
     // distills lessons itself, no separate call).
     const reflectionLoop = parseReflectionActivation(options.reflection);
+    // Read once at boot so the guidance, part of the cached prefix, never flips mid-session.
+    const caveman = resolveCaveman(options.caveman, ctx.location.directory);
+    const baseGuidance = caveman ? SYSTEM_GUIDANCE_CAVEMAN : SYSTEM_GUIDANCE;
+    const compactionContext = caveman ? COMPACTION_CONTEXT_CAVEMAN : COMPACTION_CONTEXT;
     const guidance = reflectionLoop.enabled
-      ? `${SYSTEM_GUIDANCE}\n${reflectionGuidance()}`
-      : SYSTEM_GUIDANCE;
+      ? `${baseGuidance}\n${reflectionGuidance()}`
+      : baseGuidance;
     const ops = createMemoryOps(getDb, {
+      // Only a HOT save (heat >= threshold, a rare récidive) resets the injected
+      // inventory: the next turn re-injects with the hot entry up front. Ordinary
+      // lessons keep the system prefix byte-stable (prompt-cache hits) and reach
+      // live sessions through memory_search.
       onLessonSaved: () => injected.reset(),
     });
 
@@ -805,7 +816,7 @@ export const MemoryV2 = Plugin.define({
     });
 
     // The v1 system transform maps to the v2 context hook: guidance first, then the
-    // once-per-session inventory (stale anchored entries filtered out).
+    // sticky per-session inventory (stale anchored entries filtered out).
     await ctx.session.hook("context", (event) => {
       event.system.push(textPart(guidance));
       if (disposed) {
@@ -823,7 +834,7 @@ export const MemoryV2 = Plugin.define({
     // transcript is exported verbatim and event.result replaces the model-written summary:
     // the summary model call is skipped entirely.
     await ctx.session.hook("compaction", (event) => {
-      event.system.push(textPart(COMPACTION_CONTEXT));
+      event.system.push(textPart(compactionContext));
       if (disposed) {
         return;
       }
