@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-11-24
+
+### Added
+
+- **Sticky session inventory** (prompt-cache stability): the injected block is
+  byte-identical on every request instead of vanishing from step 2 — provider and
+  llama.cpp slot caches keep hitting. Optional `caveman: "auto" | true | false`:
+  terse guidance when the upstream caveman mode is detected.
+- Hot-only re-injection: a save reaching the heat threshold (a rare récidive)
+  resets the injected inventory; ordinary lessons keep the prefix byte-stable and
+  reach live sessions through memory_search.
+- `docs/CONFIGURATION.md` caveman section.
+
+## [Unreleased]
+
 ### Fixed
 
 - **Prompt cache defeated from the second request of every session.** The inventory was
