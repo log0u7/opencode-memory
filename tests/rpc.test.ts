@@ -55,7 +55,7 @@ describe("formatMemoryLine", () => {
       top_kinds: ["decision: 12", "fact: 8"],
       all_kinds: ["decision: 12", "fact: 8"],
     });
-    expect(line).toBe("memory: ▤23 · 1.1 MB");
+    expect(line).toBe("23▤ · 1.1 MB");
   });
 
   it("stays null for an empty store", () => {
