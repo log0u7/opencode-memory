@@ -11,9 +11,12 @@ import {
   MemoryRpc,
   formatMemoryDialog,
   formatMemoryLine,
-  formatMemorySidebar,
+  formatMemorySidebarCollapsed,
+  formatMemorySidebarExpanded,
   type MemorySidebarSnapshot,
   type MemorySnapshot,
+  type SidebarSegment,
+  type SidebarTone,
 } from "./rpc.js";
 import { createSidebarState, type SidebarStateRpc } from "./sidebar-state.js";
 
@@ -50,9 +53,9 @@ function dialogBody(theme: Theme, snapshot: MemorySnapshot): JSX.Element {
   );
 }
 
-/** The sidebar body: line 0 is the clickable header (bold), the rest are muted
- * counts lines built by the pure formatMemorySidebar. Null lines (no snapshot
- * yet or the setup side unreachable) keep the bare collapsed header. */
+/** The sidebar body for plain-string lines (collapsed mode and the no-store
+ * fallback): line 0 is the clickable header (bold), the rest are muted counts
+ * lines built by the pure formatMemorySidebarCollapsed. */
 function sidebarBody(
   theme: Theme,
   header: string,
@@ -62,7 +65,7 @@ function sidebarBody(
   return (
     <box gap={0}>
       <box flexDirection="row">
-        <text fg={theme.text.base} onMouseDown={onToggle}>
+        <text fg={theme.text.base} wrapMode="none" onMouseDown={onToggle}>
           <b>{header}</b>
         </text>
       </box>
@@ -71,6 +74,62 @@ function sidebarBody(
           <text fg={theme.text.muted} wrapMode="none">
             {line}
           </text>
+        )}
+      </For>
+    </box>
+  );
+}
+
+/** The theme's attention color for the hot glyph: warning or error when the
+ * theme exposes one, plain text otherwise. */
+function alertFg(theme: Theme): string {
+  const palette = theme as {
+    warning?: { base?: string };
+    error?: { base?: string };
+    text: { base: string };
+  };
+  return palette.warning?.base ?? palette.error?.base ?? theme.text.base;
+}
+
+/** Quota tone tiers to theme colors: entity and qualifier render in text,
+ * values in muted, the alert glyph in the attention color. */
+function toneFg(theme: Theme, tone: SidebarTone): string {
+  if (tone === "value") {
+    return theme.text.muted;
+  }
+  if (tone === "alert") {
+    return alertFg(theme);
+  }
+  return theme.text.base;
+}
+
+/** The expanded v4 sidebar body: bold clickable header, then one row of text
+ * segments per line so each tone tier gets its own color. wrapMode="none"
+ * everywhere: long lines clip instead of wrapping. */
+function sidebarBodyStyled(
+  theme: Theme,
+  lines: SidebarSegment[][],
+  onToggle: () => void,
+): JSX.Element {
+  const header = lines[0]?.map((seg) => seg.text).join("") ?? "";
+  return (
+    <box gap={0}>
+      <box flexDirection="row">
+        <text fg={theme.text.base} wrapMode="none" onMouseDown={onToggle}>
+          <b>{header}</b>
+        </text>
+      </box>
+      <For each={lines.slice(1)}>
+        {(line) => (
+          <box flexDirection="row" gap={0}>
+            <For each={line}>
+              {(seg) => (
+                <text fg={toneFg(theme, seg.tone)} wrapMode="none">
+                  {seg.tone === "entity" ? <b>{seg.text}</b> : seg.text}
+                </text>
+              )}
+            </For>
+          </box>
         )}
       </For>
     </box>
@@ -154,14 +213,21 @@ export default Plugin.define({
         if (!snap) {
           return (
             <box flexDirection="row">
-              <text fg={theme.text.base}>
+              <text fg={theme.text.base} wrapMode="none">
                 <b>▶ Memory</b>
               </text>
             </box>
           );
         }
-        const lines = formatMemorySidebar(snap, store.collapsed);
-        return sidebarBody(theme, lines[0] ?? "", lines.slice(1), toggleCollapsed);
+        if (!snap.store || store.collapsed) {
+          const lines = formatMemorySidebarCollapsed(snap);
+          return sidebarBody(theme, lines[0] ?? "", lines.slice(1), toggleCollapsed);
+        }
+        return sidebarBodyStyled(
+          theme,
+          formatMemorySidebarExpanded(snap, Date.now()),
+          toggleCollapsed,
+        );
       },
     });
 

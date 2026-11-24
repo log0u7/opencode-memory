@@ -9,7 +9,13 @@ import { openMemoryDb } from "../src/lib/db.js";
 import { sweepHousekeeping } from "../src/lib/housekeeping.js";
 import { buildSidebarSnapshot } from "../src/lib/tui-snapshot.js";
 import { HOT_THRESHOLD } from "../src/lib/store.js";
-import { formatAgeHuman, formatMemorySidebar, noStoreSidebar } from "../src/rpc.js";
+import {
+  formatAgeHuman,
+  formatMemorySidebarCollapsed,
+  formatMemorySidebarExpanded,
+  noStoreSidebar,
+  type SidebarSegment,
+} from "../src/rpc.js";
 
 const NOW = 1_800_000_000_000;
 const DAY = 24 * 60 * 60 * 1000;
@@ -172,17 +178,21 @@ describe("buildSidebarSnapshot: staleness and sync files", () => {
   });
 });
 
-describe("formatMemorySidebar", () => {
+/** The rendered text of one segment line, for readable assertions. */
+function renderLine(line: SidebarSegment[] | undefined): string {
+  return (line ?? []).map((seg) => seg.text).join("");
+}
+
+describe("formatMemorySidebarCollapsed", () => {
   const base = { ...noStoreSidebar(), store: true as const };
 
   it("falls back to a single line when there is no store", () => {
-    expect(formatMemorySidebar(noStoreSidebar(), true)).toEqual(["Memory (no store)"]);
-    expect(formatMemorySidebar(noStoreSidebar(), false)).toEqual(["Memory (no store)"]);
+    expect(formatMemorySidebarCollapsed(noStoreSidebar())).toEqual(["Memory (no store)"]);
   });
 
   it("renders the collapsed two-line shape with the hot marker", () => {
     const snap = { ...base, live: 10, stale: 3, shareable: 5, hot: 2 };
-    expect(formatMemorySidebar(snap, true, NOW)).toEqual([
+    expect(formatMemorySidebarCollapsed(snap)).toEqual([
       "▶ Memory ● 2 hot",
       "10 entries · 3 stale · 5 to share",
     ]);
@@ -190,53 +200,102 @@ describe("formatMemorySidebar", () => {
 
   it("drops the hot marker and the stale segment when they are zero", () => {
     const snap = { ...base, live: 10, stale: 0, shareable: 5, hot: 0 };
-    expect(formatMemorySidebar(snap, true, NOW)).toEqual(["▶ Memory", "10 entries · 5 to share"]);
+    expect(formatMemorySidebarCollapsed(snap)).toEqual(["▶ Memory", "10 entries · 5 to share"]);
   });
+});
 
-  it("renders the expanded machine-wide breakdown", () => {
+describe("formatMemorySidebarExpanded (v4)", () => {
+  const base = { ...noStoreSidebar(), store: true as const };
+
+  it("renders header, hot+sweep, counts, kinds and sync lines with tone tiers", () => {
     const snap = {
       ...base,
-      live: 508,
-      trashed: 4,
-      scope: 165,
-      stale: 3,
-      hot: 0,
-      shareable: 5,
+      live: 368,
+      trashed: 118,
+      hot: 2,
+      last_sweep_ms: NOW - 2 * 3600_000,
       kinds: [
         { kind: "fact", count: 270 },
         { kind: "lesson", count: 165 },
-        { kind: "decision", count: 73 },
       ],
-      last_sweep_ms: NOW - 3 * 3600_000,
-      cooled: 12,
-      sync_incoming: 2,
       mesh_installed: true,
+      sync_incoming: 0,
+      shareable: 3,
     };
-    expect(formatMemorySidebar(snap, false, NOW)).toEqual([
-      "▼ Memory (machine-wide)",
-      "508 live · 4 trashed · 165 in scope",
-      "facts 270 · lessons 165 · decisions 73",
-      "last sweep: 3h · 12 cooled · 3 stale",
-      "sync: 2 incoming · 5 outgoing",
+    expect(formatMemorySidebarExpanded(snap, NOW)).toEqual([
+      [{ text: "▼ Memory", tone: "entity" }],
+      [
+        { text: "  ● ", tone: "alert" },
+        { text: "2 hot", tone: "qualifier" },
+        { text: " — last sweep 2h ago", tone: "value" },
+      ],
+      [
+        { text: "  ▤ ", tone: "qualifier" },
+        { text: "368", tone: "qualifier" },
+        { text: " live", tone: "value" },
+        { text: " · ", tone: "value" },
+        { text: "118", tone: "qualifier" },
+        { text: " trashed", tone: "value" },
+      ],
+      [
+        { text: "  ☰ ", tone: "qualifier" },
+        { text: "270", tone: "qualifier" },
+        { text: " facts", tone: "value" },
+        { text: " · ", tone: "value" },
+        { text: "165", tone: "qualifier" },
+        { text: " lessons", tone: "value" },
+      ],
+      [
+        { text: "  ⇄ ", tone: "qualifier" },
+        { text: "sync in ", tone: "value" },
+        { text: "0", tone: "qualifier" },
+        { text: " · out ", tone: "value" },
+        { text: "3", tone: "qualifier" },
+      ],
     ]);
   });
 
-  it("pluralizes only plural counts and omits empty optional lines", () => {
+  it("omits the hot line at 0 hot and the sweep tail without metadata", () => {
     const snap = {
       ...base,
-      live: 1,
+      live: 3,
       trashed: 0,
-      scope: 1,
-      stale: 0,
-      kinds: [{ kind: "fact", count: 1 }],
+      hot: 0,
       last_sweep_ms: null,
+      kinds: [{ kind: "fact", count: 3 }],
       mesh_installed: false,
     };
-    expect(formatMemorySidebar(snap, false, NOW)).toEqual([
-      "▼ Memory (machine-wide)",
-      "1 live · 0 trashed · 1 in scope",
-      "fact 1",
-    ]);
+    const lines = formatMemorySidebarExpanded(snap, NOW);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toEqual([{ text: "▼ Memory", tone: "entity" }]);
+    expect(renderLine(lines[1])).toBe("  ▤ 3 live · 0 trashed");
+    expect(renderLine(lines[2])).toBe("  ☰ 3 facts");
+  });
+
+  it("shows the hot line without a sweep tail when no sweep ran yet", () => {
+    const snap = { ...base, live: 1, hot: 1, last_sweep_ms: null };
+    const lines = formatMemorySidebarExpanded(snap, NOW);
+    expect(lines).toHaveLength(3);
+    expect(renderLine(lines[1])).toBe("  ● 1 hot");
+  });
+
+  it("pluralizes singular kind counts", () => {
+    const snap = { ...base, live: 1, trashed: 0, kinds: [{ kind: "lesson", count: 1 }] };
+    const lines = formatMemorySidebarExpanded(snap, NOW);
+    expect(renderLine(lines[2])).toBe("  ☰ 1 lesson");
+  });
+
+  it("splits kinds into groups of five per line", () => {
+    const kinds = ["lesson", "fact", "decision", "preference", "gotcha", "finding", "anchor"].map(
+      (kind, i) => ({ kind, count: 10 - i }),
+    );
+    const snap = { ...base, live: 55, trashed: 0, kinds, hot: 0 };
+    const lines = formatMemorySidebarExpanded(snap, NOW);
+    expect(lines).toHaveLength(4); // header + counts + two kind lines
+    expect(renderLine(lines[2])).toBe(
+      "  ☰ 10 lessons · 9 facts · 8 decisions · 7 preferences · 6 gotchas",
+    );
+    expect(renderLine(lines[3])).toBe("  ☰ 5 findings · 4 anchors");
   });
 
   it("formats human sweep ages across unit boundaries", () => {

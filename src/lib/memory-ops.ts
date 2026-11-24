@@ -318,25 +318,25 @@ const INVENTORY_HEADER = "Memory already stored for this project (lessons first,
 
 /** Tool descriptions shared by both entry points so the two hosts cannot drift. */
 export const TOOL_DESCRIPTIONS = {
-  save: "Save a durable entry to shared working memory (decisions, facts, preferences, gotchas, lessons). Never store credentials. Pass supersedes=<id> to replace a known entry instead of stacking a near-duplicate; without it, the result lists similar entries worth replacing.",
+  save: "Save a durable entry to shared working memory. Never store credentials. supersedes=<id> replaces a known entry; else the result lists similar entries to replace.",
   search:
-    "Search shared working memory (all sessions on this machine). Results include this project's scope and global entries: entries matching every query token come first, then entries matching some token as a prefix fill the remaining slots.",
+    "Search shared working memory machine-wide: this project's scope plus global. Entries matching every query token come first, then prefix matches fill the rest.",
   list: "List recent memory entries for a scope (default: this project), newest first.",
-  get: "Full entry by id — the search results are truncated to 500 chars; memory_get gives the complete entry.",
+  get: "Full entry by id (search results truncate to 500 chars; this returns the complete entry).",
   forget:
-    "Delete memory entries by id (any scope: ids are globally unique), or all entries matching a query. Query deletes stay inside this project's scope (plus global entries); an entry saved under another scope needs its id, or that scope, to be removed.",
+    "Delete entries by id (globally unique, any scope) or by query. Query deletes stay in this project's scope plus global; entries under another scope need their id or scope.",
   stats:
-    "Count memory entries by kind for this project (plus global entries), with a total. Use it to see how much memory already exists, for example how many lessons reflection has written. The result also names never-recalled entries (stored 30+ days, never served to the model): a purge proposal only, forget the ones you no longer need with memory_forget.",
+    "Count entries by kind for this project plus global, with a total. Also names never-recalled entries (30+ days, never served): a purge proposal only, forget the unneeded ones with memory_forget.",
   restore:
-    "Put a trashed entry back, by id. Deletes are recoverable: memory_forget reports the ids it trashed, and memory_restore brings one of them back. An entry stays restorable for 30 days.",
+    "Put a trashed entry back, by id. memory_forget reports the ids it trashed; entries stay restorable for 30 days.",
   endorse:
     "Mark an entry as worth sharing across hosts — one endorsement from an agent other than the author makes it shareable.",
   exportEntries:
-    "Export memory entries for a scope to a portable JSONL file (default .opencode/memory/memory-export.jsonl in the project). The file is versionable in git and shareable across machines; credential-like content is never exported. With shareable=true, export only the entries worth sharing cross-host: those carrying at least one endorsement (a peer's, or the author's own when the save published them with shareable).",
+    "Export a scope's entries to a portable JSONL file: versionable in git, machine-shareable, credential-like content never exported. shareable=true exports only endorsed entries (peer endorsement, or the author's own shareable:true save).",
   importEntries:
-    "Import memory entries from a portable JSONL file (default .opencode/memory/memory-export.jsonl). Idempotent: entries whose id already exists are skipped, secrets are rejected, and the import never supersedes local entries (a supersedes link pointing outside the file is dropped). The report names how many entries were imported and how many were skipped.",
+    "Import entries from a portable JSONL file. Idempotent: existing ids skipped, secrets rejected, local entries never superseded (dangling supersedes links are dropped).",
   sweep:
-    "Run the conservative housekeeping sweep now (it also runs automatically at plugin boot and every 24h): entries carrying a dated-state marker (ISO dates, 'état:', 'state as of', 'pending', 'ETA'...) that were not updated within the TTL are tombstoned (recoverable via memory_restore for 30 days), and exact duplicates of a scope (same normalized title and body, same anchoring) are removed keeping the newest copy. The same pass also syncs with the mesh: inbox files from paired hosts are imported and the scope's shareable entries are exported to the outbox. Lessons, epic/task entries are protected; anchored entries are left to the anchoring rule.",
+    "Run the housekeeping sweep now (also runs at boot and every 24h): entries with a dated-state marker (ISO dates, 'état:', 'state as of', 'pending', 'ETA'...) stale past the TTL are tombstoned (restorable via memory_restore, 30 days); exact duplicates (same title, body and anchoring) keep only the newest copy. The same pass syncs the mesh: imports inbox files, exports shareable entries to the outbox. Lessons and epic/task entries are protected; anchored entries follow the anchoring rule.",
 } as const;
 
 /**

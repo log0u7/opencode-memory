@@ -528,8 +528,8 @@ export const MemoryV2 = Plugin.define({
         name: "memory_session_search",
         description:
           "Search past session transcripts (verbatim compaction exports) for exact lines: " +
-          "errors, paths, numbers, decisions. Returns matching lines with line numbers and " +
-          "surrounding context. After a compaction, retrieve facts here instead of guessing.",
+          "errors, paths, numbers, decisions. Returns matches with line numbers and context. " +
+          "After a compaction, retrieve facts here, not by guessing.",
         input: {
           type: "object",
           properties: {
@@ -588,8 +588,8 @@ export const MemoryV2 = Plugin.define({
       editor.add({
         name: "memory_session_read",
         description:
-          "Read a numbered window of a past session transcript by 1-based line number. Use it " +
-          "after memory_session_search to pull the exact block around a match.",
+          "Read a numbered window of a past session transcript by 1-based line number, " +
+          "after memory_session_search, to pull the exact block around a match.",
         input: {
           type: "object",
           properties: {
@@ -627,7 +627,7 @@ export const MemoryV2 = Plugin.define({
         name: "memory_transcript_list",
         description:
           "List exported session transcripts with scope, size, age and last-touch time, " +
-          "so storage usage is visible before any cleanup.",
+          "so storage usage is visible before cleanup.",
         input: {
           type: "object",
           properties: {
@@ -681,9 +681,9 @@ export const MemoryV2 = Plugin.define({
       editor.add({
         name: "memory_transcript_cleanup",
         description:
-          "Sweep exported session transcripts per the retention policy. Defaults to a dry run " +
-          "(report only). Pass apply:true to actually remove. retentionDays/keepRecent/maxSessions " +
-          "override the configured policy for this call; sessionIDs limits the sweep to those sessions.",
+          "Sweep exported session transcripts per the retention policy (dry run by default; " +
+          "apply:true removes). retentionDays/keepRecent/maxSessions override the policy; " +
+          "sessionIDs limits the sweep.",
         input: {
           type: "object",
           properties: {

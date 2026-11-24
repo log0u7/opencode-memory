@@ -114,47 +114,86 @@ function plural(kind: string, count: number): string {
   return count === 1 ? kind : `${kind}s`;
 }
 
+/** Tone tiers of the quota-style sidebar grammar, mapped to the theme in
+ * tui.tsx: entity = text + bold, qualifier = text, value = textMuted, alert =
+ * the theme's warning/error color (text when it exposes none). */
+export type SidebarTone = "entity" | "qualifier" | "value" | "alert";
+
+export type SidebarSegment = { text: string; tone: SidebarTone };
+
+/** Kinds packed per expanded line before the overflow spills onto a new one. */
+const KINDS_PER_LINE = 5;
+
 /**
- * Sidebar lines for one snapshot. Line 0 is the clickable header the component
- * renders bold; the rest are muted body lines. Collapsed: the header plus one
- * muted counts line (stale segment dropped when 0). Expanded: the machine-wide
- * breakdown. No store: the single fallback line whatever the mode.
+ * Expanded sidebar (v4, quota-style): segment lines, tone per segment. Line 0
+ * is the clickable bold header. No blank lines: an inapplicable line is
+ * omitted entirely (hot at 0, sweep without metadata, sync without mesh).
  */
-export function formatMemorySidebar(
+export function formatMemorySidebarExpanded(
   s: MemorySidebarSnapshot,
-  collapsed: boolean,
   now: number = Date.now(),
-): string[] {
+): SidebarSegment[][] {
+  const lines: SidebarSegment[][] = [[{ text: "▼ Memory", tone: "entity" }]];
+  if (s.hot > 0) {
+    const line: SidebarSegment[] = [
+      { text: "  ● ", tone: "alert" },
+      { text: `${s.hot} hot`, tone: "qualifier" },
+    ];
+    if (s.last_sweep_ms !== null) {
+      const age = formatAgeHuman(Math.max(0, now - s.last_sweep_ms));
+      line.push({ text: ` — last sweep ${age} ago`, tone: "value" });
+    }
+    lines.push(line);
+  }
+  lines.push([
+    { text: "  ▤ ", tone: "qualifier" },
+    { text: `${s.live}`, tone: "qualifier" },
+    { text: " live", tone: "value" },
+    { text: " · ", tone: "value" },
+    { text: `${s.trashed}`, tone: "qualifier" },
+    { text: " trashed", tone: "value" },
+  ]);
+  const kinds = s.kinds.filter((row) => row.count > 0);
+  for (let i = 0; i < kinds.length; i += KINDS_PER_LINE) {
+    const line: SidebarSegment[] = [{ text: "  ☰ ", tone: "qualifier" }];
+    kinds.slice(i, i + KINDS_PER_LINE).forEach((row, j) => {
+      if (j > 0) {
+        line.push({ text: " · ", tone: "value" });
+      }
+      line.push(
+        { text: `${row.count}`, tone: "qualifier" },
+        { text: ` ${plural(row.kind, row.count)}`, tone: "value" },
+      );
+    });
+    lines.push(line);
+  }
+  if (s.mesh_installed) {
+    lines.push([
+      { text: "  ⇄ ", tone: "qualifier" },
+      { text: "sync in ", tone: "value" },
+      { text: `${s.sync_incoming}`, tone: "qualifier" },
+      { text: " · out ", tone: "value" },
+      { text: `${s.shareable}`, tone: "qualifier" },
+    ]);
+  }
+  return lines;
+}
+
+/**
+ * Collapsed sidebar (unchanged two-line shape) plus the no-store fallback.
+ * Line 0 is the clickable header, the rest are muted count lines.
+ */
+export function formatMemorySidebarCollapsed(s: MemorySidebarSnapshot): string[] {
   if (!s.store) {
     return ["Memory (no store)"];
   }
-  if (collapsed) {
-    const header = s.hot > 0 ? `▶ Memory ● ${s.hot} hot` : "▶ Memory";
-    const parts = [`${s.live} entries`];
-    if (s.stale > 0) {
-      parts.push(`${s.stale} stale`);
-    }
-    parts.push(`${s.shareable} to share`);
-    return [header, parts.join(" · ")];
+  const header = s.hot > 0 ? `▶ Memory ● ${s.hot} hot` : "▶ Memory";
+  const parts = [`${s.live} entries`];
+  if (s.stale > 0) {
+    parts.push(`${s.stale} stale`);
   }
-  const lines = [
-    "▼ Memory (machine-wide)",
-    `${s.live} live · ${s.trashed} trashed · ${s.scope} in scope`,
-  ];
-  const kinds = s.kinds
-    .filter((row) => row.count > 0)
-    .map((row) => `${plural(row.kind, row.count)} ${row.count}`);
-  if (kinds.length > 0) {
-    lines.push(kinds.join(" · "));
-  }
-  if (s.last_sweep_ms !== null) {
-    const age = formatAgeHuman(Math.max(0, now - s.last_sweep_ms));
-    lines.push(`last sweep: ${age} · ${s.cooled} cooled · ${s.stale} stale`);
-  }
-  if (s.mesh_installed) {
-    lines.push(`sync: ${s.sync_incoming} incoming · ${s.shareable} outgoing`);
-  }
-  return lines;
+  parts.push(`${s.shareable} to share`);
+  return [header, parts.join(" · ")];
 }
 
 export const MemoryRpc = Rpc.define({
