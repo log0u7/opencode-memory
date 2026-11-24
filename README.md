@@ -263,6 +263,23 @@ Collapsed, the panel reduces to one quota-style line (the hot count disappears a
 Memory · 142 Rec · 3.0 MB · ● 2 hot
 ```
 
+### Status reference
+
+Every state and marker the panel can show, checked against `formatMemorySidebarExpanded` / `formatMemorySidebarCollapsed` in [src/rpc.ts](src/rpc.ts):
+
+| Marker / state | Meaning |
+|---|---|
+| `● N hot` | Hot lessons (`heat >= 2`: the same lesson recorded again = one recurrence), injected in priority; cooling steps `heat - 1` per sweep while the anchoring stays fresh. Omitted at 0. |
+| collapsed `Memory · N Rec · N MB · ● N hot` | The store state plus the hot marker (omitted at 0); the size reads `N kB` below 1 MiB. |
+| `▤ N live · N trashed` | The store: current entries vs tombstoned ones (recoverable for 30 days via `memory_restore`). |
+| `≡ N facts · N lessons · …` | The breakdown by kind (two per line, biggest first). |
+| `⇄ sync in N · out N` | Cross-host sync: `in` = inbox files to import, `out` = shareables to push (line omitted without opencode-mesh). |
+| `sweep N ago` (on the hot line) | Age of the last housekeeping pass. |
+| `Memory (no store)` | The store does not exist yet. |
+| footer `N▤ · N MB` | The legacy footer line: the same store, compact (count for the calling scope plus `global`). |
+
+The kind breakdown also lives in `memory_stats`.
+
 ## Development
 
 Requires Node >= 22 (mise: `mise install`) and pnpm (corepack).
