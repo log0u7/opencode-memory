@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.4] - 2026-11-24
+
+### Fixed
+
+- **Collapsed sidebar lost its `▶` toggle in the v4 rewrite**: the one-liner
+  reads "▶ Memory · N Rec · N MB · ● N hot" again — the toggle mirrors the
+  expanded `▼` and stays bold and clickable.
+- **Footer line format**: `formatMemoryLine` renders "N Records" ("1 Record"
+  singular); the store size and the ▤ glyph leave the footer.
+
 ## [0.21.3] - 2026-11-24
 
 ### Changed
