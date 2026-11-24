@@ -279,7 +279,7 @@ describe("reflection activation", () => {
 describe("reflection guidance in the v2 system prompt", () => {
   it("carries the reflection directive by default", async () => {
     const dbPath = join(dirs[dirs.length - 1], "plugin.db");
-    const { ctx, sessionHooks } = fakeCtx(dbPath);
+    const { ctx, sessionHooks } = fakeCtx(dbPath, { caveman: false });
     const cleanup = await pluginModule.setup(ctx);
 
     const event = { system: [] as Array<{ type: string; text: string }>, messages: [] };
@@ -291,7 +291,7 @@ describe("reflection guidance in the v2 system prompt", () => {
 
   it("reflection: false keeps the standing guidance without the directive", async () => {
     const dbPath = join(dirs[dirs.length - 1], "plugin-off.db");
-    const { ctx, sessionHooks } = fakeCtx(dbPath, { reflection: false });
+    const { ctx, sessionHooks } = fakeCtx(dbPath, { reflection: false, caveman: false });
     const cleanup = await pluginModule.setup(ctx);
 
     const event = { system: [] as Array<{ type: string; text: string }>, messages: [] };

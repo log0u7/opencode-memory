@@ -96,10 +96,11 @@ export function createMemoryOps(
           ...(args.supersedes !== undefined ? { supersedes: args.supersedes } : {}),
           ...(args.shareable !== undefined ? { shareable: args.shareable } : {}),
         });
-        // A lesson save (or any row that reached hot) is new priority knowledge:
-        // dropping the once-per-session injection cache makes the next turn
-        // re-inject the inventory with the hot entry up front.
-        if (entry.kind === "lesson" || (entry.heat ?? 0) >= HOT_THRESHOLD) {
+        // Only a row that reached HOT re-injects: rebuilding the inventory changes
+        // the system prefix and misses the prompt cache, so ordinary lessons reach
+        // live sessions through memory_search — a hot récidive is rare enough to
+        // pay the miss for its next-turn injection.
+        if ((entry.heat ?? 0) >= HOT_THRESHOLD) {
           options.onLessonSaved?.();
         }
         let text = `saved ${entry.id} (${entry.scope}, ${created ? "created" : "updated"})`;

@@ -156,18 +156,24 @@ describe("hot injection", () => {
 });
 
 describe("re-injection callback", () => {
-  it("saving a lesson resets the injection cache, other saves do not", () => {
+  it("fires only when a save reaches HOT; ordinary lessons never reset the cache", () => {
     const onLessonSaved = vi.fn();
     const ops = createMemoryOps(() => db, { onLessonSaved });
 
     ops.save({ kind: "fact", title: "plain fact", body: "b" }, "/w");
     expect(onLessonSaved).not.toHaveBeenCalled();
 
+    // An ordinary lesson keeps the system prefix byte-stable (prompt-cache hits):
+    // it reaches live sessions through memory_search, not re-injection.
     ops.save({ kind: "lesson", title: "a lesson", body: "b" }, "/w");
+    expect(onLessonSaved).not.toHaveBeenCalled();
+
+    // Re-recording the same title: the row reaches the heat threshold — the rare
+    // récidive pays the cache miss for its next-turn priority injection.
+    ops.save({ kind: "lesson", title: "a lesson", body: "b2" }, "/w");
     expect(onLessonSaved).toHaveBeenCalledTimes(1);
 
-    // Re-recording the lesson (replace-by-title) fires again.
-    ops.save({ kind: "lesson", title: "a lesson", body: "b2" }, "/w");
+    ops.save({ kind: "lesson", title: "a lesson", body: "b3" }, "/w");
     expect(onLessonSaved).toHaveBeenCalledTimes(2);
   });
 });

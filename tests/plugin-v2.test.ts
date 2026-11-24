@@ -705,7 +705,9 @@ describe("opencode-memory v2 setup", () => {
 
   it("injects system guidance on context and compaction hooks", async () => {
     const dbPath = tmpDbPath();
-    const { ctx, sessionHooks } = fakeCtx(dbPath);
+    // caveman: false pins the detection — the auto path reads the REAL host config,
+    // whose AGENTS.md may carry the caveman marker (terse guidance variant).
+    const { ctx, sessionHooks } = fakeCtx(dbPath, { caveman: false });
     const cleanup = await pluginModule.setup(ctx);
 
     expect(sessionHooks.get("context")).toBeDefined();

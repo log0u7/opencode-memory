@@ -134,9 +134,11 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
   // distills lessons itself, no separate call).
   const reflectionLoop = parseReflectionActivation(options?.reflection);
   const ops = createMemoryOps(getDb, {
-    // No onLessonSaved reset: rebuilding the inventory would change the system
-    // prefix of every live session (prompt-cache miss everywhere). A new lesson
-    // reaches new sessions through their inventory, live ones through memory_search.
+    // Only a HOT save (heat >= threshold, a rare récidive) resets the injected
+    // inventory: the next turn re-injects with the hot entry up front. Ordinary
+    // lessons keep the system prefix byte-stable (prompt-cache hits) and reach
+    // live sessions through memory_search.
+    onLessonSaved: () => injected.reset(),
   });
   // Request and compaction hooks carry no directory: the instance scope is the project.
   const projectScope = defaultScope(input.worktree, input.directory);

@@ -131,7 +131,7 @@ describe("memory plugin hooks", () => {
     await hooks.dispose?.();
   });
 
-  it("does not rebuild a live session's inventory when a lesson is saved", async () => {
+  it("does not rebuild a live session's inventory when an ordinary lesson is saved", async () => {
     const dbPath = join(dir, "lesson.db");
     const hooks = await MemoryPlugin(fakeInput(), { dbPath });
     const transform = hooks["experimental.chat.system.transform"];
@@ -146,6 +146,24 @@ describe("memory plugin hooks", () => {
     const second = { system: ["base"] };
     await transform?.({ sessionID: "s1", model: {} as never }, second);
     expect(second.system).toEqual(first.system);
+    await hooks.dispose?.();
+  });
+
+  it("rebuilds a live session's inventory when a save reaches HOT (rare récidive)", async () => {
+    const dbPath = join(dir, "hot.db");
+    const hooks = await MemoryPlugin(fakeInput(), { dbPath });
+    const transform = hooks["experimental.chat.system.transform"];
+    await hooks.tool?.memory_save?.execute({ kind: "lesson", title: "seed", body: "x" }, ctx());
+
+    const first = { system: ["base"] };
+    await transform?.({ sessionID: "s1", model: {} as never }, first);
+    // Second save of the same title: the row reaches the heat threshold.
+    await hooks.tool?.memory_save?.execute({ kind: "lesson", title: "seed", body: "x" }, ctx());
+    const second = { system: ["base"] };
+    await transform?.({ sessionID: "s1", model: {} as never }, second);
+    // The rebuild changes the inventory content (the hot entry rides up front) —
+    // the cache miss is the price of the priority injection, paid rarely.
+    expect(second.system).not.toEqual(first.system);
     await hooks.dispose?.();
   });
 
