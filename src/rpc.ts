@@ -183,6 +183,14 @@ export function formatMemorySidebarExpanded(
     });
     lines.push(line);
   }
+  if (s.store_bytes > 0) {
+    const [sizeNum, sizeUnit] = storeSizeParts(s.store_bytes);
+    lines.push([
+      { text: "  ⌗  ", tone: "qualifier" },
+      { text: sizeNum, tone: "qualifier" },
+      { text: ` ${sizeUnit}`, tone: "value" },
+    ]);
+  }
   if (s.mesh_installed) {
     lines.push([
       { text: "  ⇄  ", tone: "qualifier" },

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.8] - 2026-11-24
+
+### Added
+
+- The expanded sidebar shows the store size on its own `⌗` line between kinds and sync.
+
 ## [0.21.7] - 2026-11-24
 
 ### Fixed

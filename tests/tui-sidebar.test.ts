@@ -255,7 +255,7 @@ describe("formatMemorySidebarCollapsed", () => {
 describe("formatMemorySidebarExpanded (v4)", () => {
   const base = { ...noStoreSidebar(), store: true as const };
 
-  it("renders header, hot+sweep, counts, kinds and sync lines with tone tiers", () => {
+  it("renders header, hot+sweep, counts, kinds, size and sync lines with tone tiers", () => {
     const snap = {
       ...base,
       live: 368,
@@ -266,6 +266,7 @@ describe("formatMemorySidebarExpanded (v4)", () => {
         { kind: "fact", count: 270 },
         { kind: "lesson", count: 165 },
       ],
+      store_bytes: 3_145_728,
       mesh_installed: true,
       sync_incoming: 0,
       shareable: 3,
@@ -292,6 +293,11 @@ describe("formatMemorySidebarExpanded (v4)", () => {
         { text: " · ", tone: "value" },
         { text: "165", tone: "qualifier" },
         { text: " lessons", tone: "value" },
+      ],
+      [
+        { text: "  ⌗  ", tone: "qualifier" },
+        { text: "3.0", tone: "qualifier" },
+        { text: " MB", tone: "value" },
       ],
       [
         { text: "  ⇄  ", tone: "qualifier" },
@@ -344,6 +350,20 @@ describe("formatMemorySidebarExpanded (v4)", () => {
     expect(renderLine(lines[3])).toBe("  ≡  8 decisions · 7 preferences");
     expect(renderLine(lines[4])).toBe("  ≡  6 gotchas · 5 findings");
     expect(renderLine(lines[5])).toBe("  ≡  4 anchors");
+  });
+
+  it("omits the size line when store_bytes is 0 or absent", () => {
+    const snap = { ...base, live: 3, trashed: 0, kinds: [{ kind: "fact", count: 3 }] };
+    const lines = formatMemorySidebarExpanded(snap, NOW);
+    expect(lines).toHaveLength(3);
+    expect(lines.some((line) => renderLine(line).includes("⌗"))).toBe(false);
+  });
+
+  it("renders the size line after kinds, in kB below 1 MiB", () => {
+    const snap = { ...base, live: 2, trashed: 0, kinds: [], store_bytes: 512 * 1024 };
+    const lines = formatMemorySidebarExpanded(snap, NOW);
+    expect(lines).toHaveLength(3); // header + counts + size
+    expect(renderLine(lines[2])).toBe("  ⌗  512 kB");
   });
 
   it("formats human sweep ages across unit boundaries", () => {
