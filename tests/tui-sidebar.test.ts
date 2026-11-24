@@ -204,18 +204,41 @@ describe("sidebar wire schema", () => {
 describe("formatMemorySidebarCollapsed", () => {
   const base = { ...noStoreSidebar(), store: true as const };
 
-  it("falls back to a single line when there is no store", () => {
-    expect(formatMemorySidebarCollapsed(noStoreSidebar())).toEqual(["Memory (no store)"]);
+  it("falls back to a single bold line when there is no store", () => {
+    expect(formatMemorySidebarCollapsed(noStoreSidebar())).toEqual([
+      [{ text: "Memory (no store)", tone: "entity" }],
+    ]);
   });
 
-  it("renders the collapsed one-line shape with hot and store size", () => {
-    const snap = { ...base, live: 10, stale: 3, shareable: 5, hot: 2, store_bytes: 3_145_728 };
-    expect(formatMemorySidebarCollapsed(snap)).toEqual(["▶ Memory 10▤ · 3.0 MB · ● 2 hot"]);
+  it("renders the quota-style one-liner: Memory · N Rec · size · ● N hot", () => {
+    const snap = { ...base, live: 699, stale: 3, shareable: 5, hot: 2, store_bytes: 3_145_728 };
+    expect(formatMemorySidebarCollapsed(snap)).toEqual([
+      [
+        { text: "Memory", tone: "entity" },
+        { text: " · ", tone: "value" },
+        { text: "699", tone: "qualifier" },
+        { text: " Rec", tone: "value" },
+        { text: " · ", tone: "value" },
+        { text: "3.0 MB", tone: "value" },
+        { text: " · ", tone: "value" },
+        { text: "● ", tone: "alert" },
+        { text: "2 hot", tone: "qualifier" },
+      ],
+    ]);
   });
 
   it("drops the hot marker when it is zero", () => {
     const snap = { ...base, live: 10, stale: 0, shareable: 5, hot: 0, store_bytes: 1_048_576 };
-    expect(formatMemorySidebarCollapsed(snap)).toEqual(["▶ Memory 10▤ · 1.0 MB"]);
+    expect(formatMemorySidebarCollapsed(snap)).toEqual([
+      [
+        { text: "Memory", tone: "entity" },
+        { text: " · ", tone: "value" },
+        { text: "10", tone: "qualifier" },
+        { text: " Rec", tone: "value" },
+        { text: " · ", tone: "value" },
+        { text: "1.0 MB", tone: "value" },
+      ],
+    ]);
   });
 });
 
@@ -242,7 +265,7 @@ describe("formatMemorySidebarExpanded (v4)", () => {
       [
         { text: "  ● ", tone: "alert" },
         { text: "2 hot", tone: "qualifier" },
-        { text: " — last sweep 2h ago", tone: "value" },
+        { text: " · sweep 2h ago", tone: "value" },
       ],
       [
         { text: "  ▤  ", tone: "qualifier" },

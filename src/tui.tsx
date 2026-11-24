@@ -53,33 +53,6 @@ function dialogBody(theme: Theme, snapshot: MemorySnapshot): JSX.Element {
   );
 }
 
-/** The sidebar body for plain-string lines (collapsed mode and the no-store
- * fallback): line 0 is the clickable header (bold), the rest are muted counts
- * lines built by the pure formatMemorySidebarCollapsed. */
-function sidebarBody(
-  theme: Theme,
-  header: string,
-  body: string[],
-  onToggle: () => void,
-): JSX.Element {
-  return (
-    <box gap={0}>
-      <box flexDirection="row">
-        <text fg={theme.text.base} wrapMode="none" onMouseDown={onToggle}>
-          <b>{header}</b>
-        </text>
-      </box>
-      <For each={body}>
-        {(line) => (
-          <text fg={theme.text.muted} wrapMode="none">
-            {line}
-          </text>
-        )}
-      </For>
-    </box>
-  );
-}
-
 /** The theme's attention color for the hot glyph: warning or error when the
  * theme exposes one, plain text otherwise. */
 function alertFg(theme: Theme): string {
@@ -103,21 +76,26 @@ function toneFg(theme: Theme, tone: SidebarTone): string {
   return theme.text.base;
 }
 
-/** The expanded v4 sidebar body: bold clickable header, then one row of text
- * segments per line so each tone tier gets its own color. wrapMode="none"
- * everywhere: long lines clip instead of wrapping. */
+/** The sidebar body: bold clickable header line, then one row of text segments
+ * per line so each tone tier gets its own color. The header goes through the
+ * same segment grammar: the collapsed one-liner mixes the bold title with
+ * qualifier/value counts. wrapMode="none" everywhere: long lines clip instead
+ * of wrapping. */
 function sidebarBodyStyled(
   theme: Theme,
   lines: SidebarSegment[][],
   onToggle: () => void,
 ): JSX.Element {
-  const header = lines[0]?.map((seg) => seg.text).join("") ?? "";
   return (
     <box gap={0}>
       <box flexDirection="row">
-        <text fg={theme.text.base} wrapMode="none" onMouseDown={onToggle}>
-          <b>{header}</b>
-        </text>
+        <For each={lines[0] ?? []}>
+          {(seg) => (
+            <text fg={toneFg(theme, seg.tone)} wrapMode="none" onMouseDown={onToggle}>
+              {seg.tone === "entity" ? <b>{seg.text}</b> : seg.text}
+            </text>
+          )}
+        </For>
       </box>
       <For each={lines.slice(1)}>
         {(line) => (
@@ -220,8 +198,7 @@ export default Plugin.define({
           );
         }
         if (!snap.store || store.collapsed) {
-          const lines = formatMemorySidebarCollapsed(snap);
-          return sidebarBody(theme, lines[0] ?? "", lines.slice(1), toggleCollapsed);
+          return sidebarBodyStyled(theme, formatMemorySidebarCollapsed(snap), toggleCollapsed);
         }
         return sidebarBodyStyled(
           theme,

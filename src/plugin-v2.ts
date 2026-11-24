@@ -16,7 +16,6 @@ import {
   stickyPerSession,
 } from "./lib/memory-ops.js";
 import { resolveCaveman } from "./lib/caveman.js";
-import { currentCommitHash } from "./lib/git.js";
 import { createDurableStore } from "./lib/persist.js";
 import { defaultMeshDataDir, defaultMeshInboxDir } from "./lib/sync.js";
 import { buildSidebarSnapshot } from "./lib/tui-snapshot.js";
@@ -303,13 +302,11 @@ export const MemoryV2 = Plugin.define({
           };
           return {
             content: ops.save(
-              {
-                ...a,
-                // Auto-anchor: the entry is written against the current HEAD.
-                commit_sha: currentCommitHash(ctx.location.directory),
-              },
+              { ...a },
               defaultScope(undefined, a.scope ?? ctx.location.directory),
               context.agent,
+              // The lib auto-captures HEAD when the save anchors paths.
+              { directory: ctx.location.directory },
             ),
           };
         },

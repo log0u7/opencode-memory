@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 
 import { databaseSizeBytes, type MemoryDb } from "./db.js";
-import { isEntryFresh } from "./git.js";
+import { currentCommitHash, isEntryFresh } from "./git.js";
 import { exportPortable, importPortable, resolvePortablePath } from "./portable.js";
 import {
   endorseEntry,
@@ -35,8 +35,8 @@ export type SaveArgs = {
   /** Files the entry documents (relative project paths): the entry is stale
    * when any of them changes after the save commit. */
   paths?: string[] | undefined;
-  /** Repository commit the entry was written against (auto-resolved by the
-   * plugin from the project directory). */
+  /** Repository commit the entry was written against (auto-captured at save
+   * from the project directory when paths are anchored). */
   commit_sha?: string | undefined;
   /** Id of the entry this one replaces: the old row is kept as a superseded
    * tombstone instead of stacking a near-duplicate. */
@@ -63,7 +63,12 @@ export type SweepArgs = { scope?: string | undefined; ttl_days?: number | undefi
 /** One shared behaviour behind both plugin entry points. Every operation returns the
  * model-facing text directly, so a caller cannot bypass caps or error handling. */
 export type MemoryOps = {
-  save: (args: SaveArgs, scope: string, source?: string) => string;
+  save: (
+    args: SaveArgs,
+    scope: string,
+    source?: string,
+    options?: { directory?: string },
+  ) => string;
   search: (args: SearchArgs, scope: string) => string;
   list: (args: ListArgs, scope: string) => string;
   get: (args: GetArgs) => string;
@@ -81,8 +86,17 @@ export function createMemoryOps(
   options: { onLessonSaved?: () => void } = {},
 ): MemoryOps {
   return {
-    save: (args, scope, source) =>
+    save: (args, scope, source, saveOptions = {}) =>
       run(() => {
+        // Auto-anchor: with anchored paths and no explicit commit, one git call
+        // captures the HEAD the entry was written against: the save is then
+        // fully anchored (paths + commit) and the cooling can apply. Outside a
+        // repository, or without paths, the entry keeps its previous shape.
+        const commit_sha =
+          args.commit_sha ??
+          (args.paths !== undefined && args.paths.length > 0 && saveOptions.directory !== undefined
+            ? currentCommitHash(saveOptions.directory)
+            : undefined);
         const { entry, created, superseded } = saveEntry(getDb(), {
           scope,
           kind: args.kind,
@@ -92,7 +106,7 @@ export function createMemoryOps(
           expires_at: args.expires_at ?? null,
           ...(source !== undefined ? { source } : {}),
           ...(args.paths !== undefined ? { paths: args.paths } : {}),
-          ...(args.commit_sha !== undefined ? { commit_sha: args.commit_sha } : {}),
+          ...(commit_sha !== undefined ? { commit_sha: commit_sha } : {}),
           ...(args.supersedes !== undefined ? { supersedes: args.supersedes } : {}),
           ...(args.shareable !== undefined ? { shareable: args.shareable } : {}),
         });
@@ -201,7 +215,7 @@ export function createMemoryOps(
         // user decides which never-recalled entries deserve memory_forget.
         const never = neverRecalled(getDb(), { scope });
         if (never.length > 0) {
-          text += `\nnever-recalled: ${never.length} (${renderRemoved(never)}) - forgotten by no one so far; propose memory_forget for the ones that are no longer useful`;
+          text += `\nnever-recalled: ${never.length} (${renderRemoved(never)}) - no recall in 30 days or more; propose memory_forget for the ones that are no longer useful`;
         }
         return text;
       }),

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.3] - 2026-11-24
+
+### Changed
+
+- **Collapsed sidebar, quota-style one-liner**: "Memory · 699 Rec · 3.0 MB" plus
+  " · ● N hot" when hot (omitted at 0), built with the expanded panel's segment
+  grammar: only the title stays bold, counts are qualifier/value toned, and
+  "Rec" never pluralizes. The no-store fallback keeps "Memory (no store)".
+- Hot expanded line reads " · sweep N ago" instead of the old "last sweep N ago" tail.
+
+### Added
+
+- **Commit anchoring at save**: a save with anchored paths and no explicit
+  commit_sha captures `git rev-parse HEAD` from the project directory once per
+  save, so the entry anchors complete (paths + commit) and the cooling can
+  apply. Outside a repository, or without paths, the entry is unchanged.
+- The never-recalled report (purge-on-proposal in memory_stats) also lists
+  unanchored `lesson` entries not recalled for more than 30 days: the sweep
+  never dates them out, so the report is their soft cap. Anchored lessons stay
+  the anchoring's business, and nothing is deleted automatically.
+
 ## [0.21.2] - 2026-11-24
 
 ### Fixed
