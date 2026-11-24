@@ -240,7 +240,7 @@ The plugin renders a `Memory` panel in OpenCode's sidebar. Click the title to co
 
 ```text
 ▼ Memory
-  ● 2 hot — last sweep 3h ago
+  ● 2 hot · sweep 3h ago
   ▤  142 live · 7 trashed
   ≡  84 facts · 31 lessons
   ≡  12 decisions · 8 gotchas
@@ -252,16 +252,15 @@ The plugin renders a `Memory` panel in OpenCode's sidebar. Click the title to co
 |---|---|
 | `▼ Memory` | The panel title, clickable: toggles the collapsed/expanded state. |
 | `● N hot` | Hot lessons (`heat >= 2`): recidivism, injected in priority. Line omitted at 0. |
-| `last sweep N ago` | Age of the last housekeeping pass (shown on the hot line, hidden with it). |
+| `sweep N ago` | Age of the last housekeeping pass (shown on the hot line, hidden with it). |
 | `▤ N live · N trashed` | The store: current entries vs tombstoned ones (recoverable for 30 days). |
 | `≡ N facts · N lessons` | Breakdown by kind, two per line, biggest first; extra kinds continue on the next lines. |
 | `⇄ sync in N · out N` | Cross-host sync: `in` = inbox files to import, `out` = shareables to push to peers. Line omitted without opencode-mesh. |
 
-Collapsed, the panel reduces to a two-line summary (the hot count disappears at 0):
+Collapsed, the panel reduces to one quota-style line (the hot count disappears at 0):
 
 ```text
-▶ Memory
-142 entries · 1 to share
+Memory · 142 Rec · 3.0 MB · ● 2 hot
 ```
 
 ## Development

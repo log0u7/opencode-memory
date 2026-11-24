@@ -16,7 +16,6 @@ import {
   stickyPerSession,
 } from "./lib/memory-ops.js";
 import { resolveCaveman } from "./lib/caveman.js";
-import { currentCommitHash } from "./lib/git.js";
 import {
   parseReflectionActivation,
   parseReflectionConfig,
@@ -212,12 +211,11 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
         },
         execute: async (args, context) =>
           ops.save(
-            {
-              ...args,
-              commit_sha: currentCommitHash(context.directory ?? context.worktree ?? process.cwd()),
-            },
+            { ...args },
             defaultScope(args.scope ?? context.worktree ?? context.directory),
             context.agent,
+            // The lib auto-captures HEAD when the save anchors paths.
+            { directory: context.directory ?? context.worktree ?? process.cwd() },
           ),
       }),
 

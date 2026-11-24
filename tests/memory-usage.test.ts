@@ -125,6 +125,55 @@ describe("neverRecalled", () => {
     db.close();
   });
 
+  it("lists unanchored lessons not recalled for more than 30 days, even once used", () => {
+    const db = openMemoryDb(":memory:");
+    const now = Date.now();
+    const lesson = save(db, input({ title: "stale lesson", kind: "lesson" }), {
+      now: now - 40 * DAY_MS,
+    });
+    touchUsage(db, [lesson.id], now - 35 * DAY_MS);
+
+    const result = neverRecalled(db, { scope: SCOPE, now });
+
+    expect(result.map((entry) => entry.id)).toContain(lesson.id);
+    db.close();
+  });
+
+  it("keeps recently recalled unanchored lessons out", () => {
+    const db = openMemoryDb(":memory:");
+    const now = Date.now();
+    const lesson = save(db, input({ title: "fresh lesson", kind: "lesson" }), {
+      now: now - 40 * DAY_MS,
+    });
+    touchUsage(db, [lesson.id], now - 5 * DAY_MS);
+
+    expect(neverRecalled(db, { scope: SCOPE, now }).map((entry) => entry.id)).not.toContain(
+      lesson.id,
+    );
+    db.close();
+  });
+
+  it("keeps anchored lessons out: the anchoring owns their lifecycle", () => {
+    const db = openMemoryDb(":memory:");
+    const now = Date.now();
+    const lesson = save(
+      db,
+      input({
+        title: "anchored lesson",
+        kind: "lesson",
+        paths: ["src/a.ts"],
+        commit_sha: "abc1234",
+      }),
+      { now: now - 40 * DAY_MS },
+    );
+    touchUsage(db, [lesson.id], now - 35 * DAY_MS);
+
+    expect(neverRecalled(db, { scope: SCOPE, now }).map((entry) => entry.id)).not.toContain(
+      lesson.id,
+    );
+    db.close();
+  });
+
   it("excludes superseded and tombstoned entries", () => {
     const db = openMemoryDb(":memory:");
     const now = Date.now();
@@ -162,6 +211,20 @@ describe("stats never-recalled section", () => {
     save(db, input({ title: "fresh entry" }));
 
     expect(ops.stats(SCOPE)).not.toContain("never-recalled");
+    db.close();
+  });
+
+  it("proposes old unanchored never-recalled lessons", () => {
+    const db = openMemoryDb(":memory:");
+    const ops = createMemoryOps(() => db);
+    save(db, input({ title: "immortal lesson", kind: "lesson" }), {
+      now: Date.now() - 40 * DAY_MS,
+    });
+
+    const result = ops.stats(SCOPE);
+
+    expect(result).toContain("never-recalled: 1");
+    expect(result).toContain("immortal lesson");
     db.close();
   });
 });

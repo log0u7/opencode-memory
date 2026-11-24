@@ -7,9 +7,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { currentCommitHash, isEntryFresh } from "../src/lib/git.js";
-import { memoryInventory } from "../src/lib/memory-ops.js";
+import { createMemoryOps, memoryInventory } from "../src/lib/memory-ops.js";
 import { openMemoryDb } from "../src/lib/db.js";
-import { saveEntry } from "../src/lib/store.js";
+import { getById, saveEntry } from "../src/lib/store.js";
 import type { Entry } from "../src/types/entry.js";
 
 let repo: string;
@@ -62,6 +62,52 @@ describe("currentCommitHash", () => {
 
   it("returns undefined outside a repository", () => {
     expect(currentCommitHash("/tmp")).toBeUndefined();
+  });
+});
+
+describe("ops.save auto commit anchoring", () => {
+  it("captures HEAD when paths are anchored and no commit is given", () => {
+    const ops = createMemoryOps(() => db);
+    const sha = git(["rev-parse", "HEAD"]).trim();
+
+    const text = ops.save(
+      { kind: "lesson", title: "auto anchor", body: "b", paths: ["README.md"] },
+      repo,
+      undefined,
+      { directory: repo },
+    );
+    const id = text.split(" ")[1] ?? "";
+
+    expect(getById(db, id)?.entry.commit_sha).toBe(sha);
+  });
+
+  it("leaves the entry unchanged outside a repository", () => {
+    const ops = createMemoryOps(() => db);
+    const outside = mkdtempSync(join(tmpdir(), "memory-norepo-"));
+    try {
+      const text = ops.save(
+        { kind: "lesson", title: "no repo", body: "b", paths: ["README.md"] },
+        outside,
+        undefined,
+        { directory: outside },
+      );
+      const id = text.split(" ")[1] ?? "";
+
+      expect(getById(db, id)?.entry.commit_sha).toBeUndefined();
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("does not capture a commit when no paths are anchored", () => {
+    const ops = createMemoryOps(() => db);
+
+    const text = ops.save({ kind: "fact", title: "no paths", body: "b" }, repo, undefined, {
+      directory: repo,
+    });
+    const id = text.split(" ")[1] ?? "";
+
+    expect(getById(db, id)?.entry.commit_sha).toBeUndefined();
   });
 });
 

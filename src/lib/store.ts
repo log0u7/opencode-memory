@@ -639,8 +639,10 @@ export const NEVER_RECALLED_DEFAULT_LIMIT = 20;
 /**
  * Live entries of one scope plus `global` that were never served to the model and have
  * been sitting older than `olderThanMs` (default 30 days), oldest first: the purge-on-
- * proposal list. The store deletes nothing here — the caller decides, through
- * memory_forget, which rows deserve the trash.
+ * proposal list. Unanchored `lesson` entries join the list once their last recall is
+ * older than the window too (they never date out of the sweep, so this report is their
+ * soft cap); anchored lessons stay the anchoring's business. The store deletes nothing
+ * here — the caller decides, through memory_forget, which rows deserve the trash.
  */
 export function neverRecalled(
   db: MemoryDb,
@@ -655,10 +657,15 @@ export function neverRecalled(
     .all<Row>(
       `SELECT * FROM entries
        WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?)
-         AND status != 'superseded' AND ${LIVE} AND use_count = 0 AND created_at <= ?
+         AND status != 'superseded' AND ${LIVE} AND created_at <= ?
+         AND (
+           use_count = 0
+           OR (kind = 'lesson' AND COALESCE(paths, '') IN ('', '[]')
+                AND (last_used IS NULL OR last_used <= ?))
+         )
        ORDER BY created_at ASC, id ASC
        LIMIT ?`,
-      [scope, now, now - olderThanMs, limit],
+      [scope, now, now - olderThanMs, now - olderThanMs, limit],
     )
     .map(rowToEntry);
 }

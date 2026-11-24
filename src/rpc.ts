@@ -144,7 +144,7 @@ export function formatMemorySidebarExpanded(
     ];
     if (s.last_sweep_ms !== null) {
       const age = formatAgeHuman(Math.max(0, now - s.last_sweep_ms));
-      line.push({ text: ` — last sweep ${age} ago`, tone: "value" });
+      line.push({ text: ` · sweep ${age} ago`, tone: "value" });
     }
     lines.push(line);
   }
@@ -186,22 +186,35 @@ export function formatMemorySidebarExpanded(
 }
 
 /**
- * Collapsed sidebar (unchanged two-line shape) plus the no-store fallback.
- * Line 0 is the clickable header, the rest are muted count lines.
+ * Collapsed sidebar: the quota-style one-liner, built with the same segment
+ * grammar as the expanded panel. Only the title is bold (entity); the whole
+ * line is the clickable header. "Rec" never pluralizes. "Memory (no store)"
+ * for an empty store, so the slot stays hidden instead of advertising nothing.
  */
-/** One collapsed sidebar line: "▶ Memory 699▤ · 3.0 MB" (+ " · ● N hot" when hot).
- * "Memory (no store)" for an empty store, so the slot stays hidden instead of
- * advertising nothing. */
-export function formatMemorySidebarCollapsed(s: MemorySidebarSnapshot): string[] {
+export function formatMemorySidebarCollapsed(s: MemorySidebarSnapshot): SidebarSegment[][] {
   if (!s.store) {
-    return ["Memory (no store)"];
+    return [[{ text: "Memory (no store)", tone: "entity" }]];
   }
   const size =
     s.store_bytes >= 1_048_576
       ? `${(s.store_bytes / 1_048_576).toFixed(1)} MB`
       : `${Math.max(1, Math.round(s.store_bytes / 1024))} kB`;
-  const hot = s.hot > 0 ? ` · ● ${s.hot} hot` : "";
-  return [`▶ Memory ${s.live}▤ · ${size}${hot}`];
+  const line: SidebarSegment[] = [
+    { text: "Memory", tone: "entity" },
+    { text: " · ", tone: "value" },
+    { text: `${s.live}`, tone: "qualifier" },
+    { text: " Rec", tone: "value" },
+    { text: " · ", tone: "value" },
+    { text: size, tone: "value" },
+  ];
+  if (s.hot > 0) {
+    line.push(
+      { text: " · ", tone: "value" },
+      { text: "● ", tone: "alert" },
+      { text: `${s.hot} hot`, tone: "qualifier" },
+    );
+  }
+  return [line];
 }
 
 export const MemoryRpc = Rpc.define({
