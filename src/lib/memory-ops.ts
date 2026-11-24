@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 
 import { databaseSizeBytes, type MemoryDb } from "./db.js";
-import { currentCommitHash, isEntryFresh } from "./git.js";
+import { contentHashes, currentCommitHash, isEntryFresh } from "./git.js";
 import { exportPortable, importPortable, resolvePortablePath } from "./portable.js";
 import {
   endorseEntry,
@@ -93,11 +93,25 @@ export function createMemoryOps(
         // captures the HEAD the entry was written against: the save is then
         // fully anchored (paths + commit) and the cooling can apply. Outside a
         // repository, or without paths, the entry keeps its previous shape.
-        const commit_sha =
-          args.commit_sha ??
-          (args.paths !== undefined && args.paths.length > 0 && saveOptions.directory !== undefined
+        const autoCommit =
+          args.paths !== undefined && args.paths.length > 0 && saveOptions.directory !== undefined
             ? currentCommitHash(saveOptions.directory)
-            : undefined);
+            : undefined;
+        const commit_sha = args.commit_sha ?? autoCommit;
+        // Content stamp: the git blob hash of each anchored path at save time,
+        // captured when the directory is a repository (the commit capture
+        // succeeded). A save made on a dirty tree (agent edited files, not
+        // committed yet) or on an untracked file anchors by content, so the
+        // entry is fresh at creation and stale only when a file really changes.
+        // A missing path (or a non-repository directory) leaves the entry on
+        // the commit-only check, which already treats a missing path as stale.
+        const content_hashes =
+          autoCommit !== undefined &&
+          args.paths !== undefined &&
+          args.paths.length > 0 &&
+          saveOptions.directory !== undefined
+            ? contentHashes(saveOptions.directory, args.paths)
+            : undefined;
         // An 8-char id prefix is accepted wherever a full id is; an unresolvable
         // prefix keeps its original text so the store names the mistake itself.
         const supersedes =
@@ -114,6 +128,7 @@ export function createMemoryOps(
           ...(source !== undefined ? { source } : {}),
           ...(args.paths !== undefined ? { paths: args.paths } : {}),
           ...(commit_sha !== undefined ? { commit_sha: commit_sha } : {}),
+          ...(content_hashes !== undefined ? { content_hashes: content_hashes } : {}),
           ...(supersedes !== undefined ? { supersedes: supersedes } : {}),
           ...(args.shareable !== undefined ? { shareable: args.shareable } : {}),
         });

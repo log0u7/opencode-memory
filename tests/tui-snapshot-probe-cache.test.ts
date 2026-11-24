@@ -36,12 +36,17 @@ describe("tui-snapshot freshness cache", () => {
     return execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" });
   }
 
-  function insertAnchored(title: string, paths: string[], sha: string): void {
+  function insertAnchored(
+    title: string,
+    paths: string[],
+    sha: string,
+    hashes?: Record<string, string>,
+  ): void {
     db.conn.run(
       `INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at,
-         source, deleted_at, paths, commit_sha, supersedes, status, superseded_at, heat, endorsed_by)
-       VALUES (?, '/w', 'fact', ?, 'body', '[]', ?, ?, NULL, NULL, ?, ?, NULL, 'current', NULL, 0, NULL)`,
-      [title, title, NOW, NOW, JSON.stringify(paths), sha],
+         source, deleted_at, paths, commit_sha, supersedes, status, superseded_at, heat, endorsed_by, content_hashes)
+       VALUES (?, '/w', 'fact', ?, 'body', '[]', ?, ?, NULL, NULL, ?, ?, NULL, 'current', NULL, 0, NULL, ?)`,
+      [title, title, NOW, NOW, JSON.stringify(paths), sha, hashes ? JSON.stringify(hashes) : null],
     );
   }
 
@@ -123,6 +128,52 @@ describe("tui-snapshot freshness cache", () => {
       const snap = buildSidebarSnapshot(db, options);
       expect(snap.stale).toBe(1); // fresh stays fresh, gone stays stale
     }
+  });
+
+  it("caches content-anchored verdicts: one git call, no re-hash on hit", () => {
+    const hashOf = (name: string): string => git(["hash-object", `src/${name}.ts`]).trim();
+    insertAnchored("content e1", ["src/a.ts"], git(["rev-parse", "HEAD"]).trim(), {
+      "src/a.ts": hashOf("a"),
+    });
+    const options = { scope: "/w", now: NOW, directory: repo };
+
+    probes.git = 0;
+    expect(buildSidebarSnapshot(db, options).stale).toBe(0);
+    // Content mode costs one hash-object, not diff + ls-files.
+    expect(probes.git).toBe(1);
+
+    probes.git = 0;
+    const cached = freshCache.size();
+    for (let i = 0; i < 5; i++) {
+      expect(buildSidebarSnapshot(db, options).stale).toBe(0);
+    }
+    expect(probes.git).toBe(0);
+    expect(freshCache.size()).toBe(cached);
+  });
+
+  it("re-probes when content changes and when the anchor stamp moves", () => {
+    const sha = git(["rev-parse", "HEAD"]).trim();
+    const hashA = git(["hash-object", "src/a.ts"]).trim();
+    insertAnchored("hash e1", ["src/a.ts"], sha, { "src/a.ts": hashA });
+    const options = { scope: "/w", now: NOW, directory: repo };
+    expect(buildSidebarSnapshot(db, options).stale).toBe(0);
+
+    // An edit moves mtime: honest re-probe against the saved blob.
+    writeFileSync(join(repo, "src/a.ts"), "export const a = 2;\n");
+    expect(buildSidebarSnapshot(db, options).stale).toBe(1);
+
+    // Reverted to the saved content: fresh again.
+    writeFileSync(join(repo, "src/a.ts"), "export const a = 1;\n");
+    expect(buildSidebarSnapshot(db, options).stale).toBe(0);
+
+    // A different content stamp is a different key even with the same
+    // (commit, paths): re-probed once.
+    insertAnchored("hash e2", ["src/a.ts"], sha, { "src/a.ts": sha });
+    probes.git = 0;
+    const stamped = freshCache.size();
+    expect(buildSidebarSnapshot(db, options).stale).toBe(1); // sha is not a blob hash of a.ts
+    expect(probes.git).toBe(1);
+    expect(freshCache.size()).toBe(stamped + 1); // two entries, one edit, one revert
   });
 
   it("evicts the oldest verdicts past the 10_000 bound", () => {

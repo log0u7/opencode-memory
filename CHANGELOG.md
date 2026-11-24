@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.6] - 2026-11-24
+
+### Fixed
+
+- **Content-based anchoring**: an entry saved right after editing files (before
+  commit) was stale at creation — the 0.11.0 check compared the saved commit to
+  the working tree, so a dirty path or an untracked file failed it immediately
+  and the auto-anchoring cooled exactly the freshest lessons. The anchor now
+  also stores the `git hash-object` of each path at save time
+  (`content_hashes`): freshness is content equality (every path re-hashes to
+  its saved blob), which works on dirty trees, untracked files and deleted
+  paths alike. The commit stamp stays secondary; entries anchored by commit
+  only keep the previous check (backward compatible). The freshness cache key
+  carries the new stamp, so a probe still costs one bounded `hash-object`
+  subprocess (two for commit-only entries) and zero on a hit.
+
 ## [0.21.5] - 2026-11-24
 
 ### Changed

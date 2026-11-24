@@ -98,16 +98,18 @@ export function validateEntry(input: EntryInput): void {
       throw new TypeError("at most 20 paths allowed");
     }
     for (const path of input.paths) {
-      if (
-        path.length === 0 ||
-        path.length > 500 ||
-        isAbsolute(path) ||
-        path.split(/[\\/]/).includes("..") ||
-        /[\0\r\n]/.test(path)
-      ) {
-        throw new TypeError(
-          "paths must be relative project paths (no '.. ', no absolute, max 500 chars)",
-        );
+      assertProjectPath(path, "paths");
+    }
+  }
+  if (input.content_hashes !== undefined) {
+    const keys = Object.keys(input.content_hashes);
+    if (keys.length > 20) {
+      throw new TypeError("at most 20 paths allowed");
+    }
+    for (const key of keys) {
+      assertProjectPath(key, "content_hashes keys");
+      if (!/^[0-9a-f]{40}$/.test(input.content_hashes[key] ?? "")) {
+        throw new TypeError("content_hashes values must be git blob shas (40 hex)");
       }
     }
   }
@@ -126,6 +128,22 @@ export function looksLikeSecret(
   input: Pick<EntryInput, "title" | "kind" | "body" | "tags">,
 ): boolean {
   return SECRET_PATTERNS.some((pattern) => matchesSecretPattern(input, pattern));
+}
+
+/** Shape rule for one anchored path (paths and content_hashes keys share it).
+ * Throws a TypeError naming the field. */
+function assertProjectPath(path: string, field: string): void {
+  if (
+    path.length === 0 ||
+    path.length > 500 ||
+    isAbsolute(path) ||
+    path.split(/[\\/]/).includes("..") ||
+    /[\0\r\n]/.test(path)
+  ) {
+    throw new TypeError(
+      `${field} must be relative project paths (no '.. ', no absolute, max 500 chars)`,
+    );
+  }
 }
 
 function matchesSecretPattern(
@@ -276,7 +294,7 @@ export function saveEntry(
     // (author or peers) are never dropped by a rewrite.
     const endorsers = mergeEndorsement(parseStringArray(existing.endorsed_by ?? "[]"), input);
     db.conn.run(
-      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ?, source = ?, paths = ?, commit_sha = ?, heat = ?, endorsed_by = ? WHERE id = ?",
+      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ?, source = ?, paths = ?, commit_sha = ?, content_hashes = ?, heat = ?, endorsed_by = ? WHERE id = ?",
       [
         input.kind,
         input.body,
@@ -286,6 +304,7 @@ export function saveEntry(
         input.source ?? null,
         JSON.stringify(input.paths ?? []),
         input.commit_sha ?? null,
+        input.content_hashes === undefined ? null : JSON.stringify(input.content_hashes),
         heat,
         endorsers.length > 0 ? JSON.stringify(endorsers) : null,
         existing.id,
@@ -328,7 +347,7 @@ export function saveEntry(
       : parseStringArray(supersededEndorsedBy).filter((endorser) => endorser !== input.source);
   const endorsers = mergeEndorsement(peerEndorsers, input);
   db.conn.run(
-    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, supersedes, status, superseded_at, heat, endorsed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, content_hashes, supersedes, status, superseded_at, heat, endorsed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       id,
       scope,
@@ -342,6 +361,7 @@ export function saveEntry(
       input.source ?? null,
       JSON.stringify(input.paths ?? []),
       input.commit_sha ?? null,
+      input.content_hashes === undefined ? null : JSON.stringify(input.content_hashes),
       input.supersedes ?? null,
       "current",
       null,
@@ -826,6 +846,9 @@ function rowToEntry(row: Row): Entry {
     ...(row.commit_sha !== null && row.commit_sha !== undefined
       ? { commit_sha: String(row.commit_sha) }
       : {}),
+    ...(row.content_hashes !== null && row.content_hashes !== undefined
+      ? { content_hashes: parseHashes(String(row.content_hashes)) }
+      : {}),
     ...(row.supersedes !== null && row.supersedes !== undefined
       ? { supersedes: row.supersedes }
       : {}),
@@ -836,6 +859,27 @@ function rowToEntry(row: Row): Entry {
     ...(row.heat !== null && row.heat !== undefined && row.heat > 0 ? { heat: row.heat } : {}),
     ...(endorsers.length > 0 ? { endorsed_by: endorsers } : {}),
   };
+}
+
+/** JSON object column decoded leniently: a malformed payload or a non-string
+ * value is dropped instead of crashing a read; an unreadable blob reads as an
+ * empty stamp, which the freshness check treats as absent. */
+function parseHashes(raw: string): Record<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    const hashes: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "string" && /^[0-9a-f]{40}$/.test(value)) {
+        hashes[key] = value;
+      }
+    }
+    return hashes;
+  } catch {
+    return {};
+  }
 }
 
 /** JSON array column decoded leniently: a malformed or non-string payload reads as
