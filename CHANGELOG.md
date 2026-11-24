@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.5] - 2026-11-24
+
+### Fixed
+
+- **TUI snapshot git probes cached by (commit, paths, working-tree state)**: the
+  staleness pass re-probed up to 200 anchored entries on every sidebar refresh
+  (event gap or 30 s poll), 2 git subprocesses each (`diff --quiet` +
+  `ls-files --others`) — an active session burst 200 entries × 2 subprocess per
+  event gap. Identical snapshots now cost zero: verdicts are cached per process
+  under a key that carries the observed state of every anchored path
+  (mtimeMs + size, or "missing"), so a hit still reflects the current working
+  tree (an edit moves mtime, a delete moves existence, a re-save moves the
+  stamp). Measured: 10 identical snapshots over 3 anchored entries drop from 60
+  to 6 git subprocesses (the first snapshot only). LRU bound at 10 000 entries.
+  `isEntryFresh` stays a pure function in git.ts; the cache lives in
+  tui-snapshot.ts.
+
 ## [0.20.4] - 2026-11-24
 
 ### Changed
