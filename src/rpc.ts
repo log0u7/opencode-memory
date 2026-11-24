@@ -27,19 +27,16 @@ export function snapshotFromStats(
   };
 }
 
-/** One footer line: "23▤ · 1.1 MB". Null for an empty store, so the slot
- * stays hidden instead of advertising nothing. The kind breakdown lives in the
- * sidebar and memory_stats — the footer stays one compact fact. The host
- * already labels the slot "Memory", so the line carries no prefix. */
+/** One footer line: "23 Records" ("1 Record" singular). Null for an empty
+ * store, so the slot stays hidden instead of advertising nothing. The kind
+ * breakdown lives in the sidebar and memory_stats — the footer stays one
+ * compact fact. The host already labels the slot "Memory", so the line carries
+ * no prefix. */
 export function formatMemoryLine(s: MemorySnapshot): string | null {
   if (s.total === 0) {
     return null;
   }
-  const size =
-    s.store_bytes >= 1_048_576
-      ? `${(s.store_bytes / 1_048_576).toFixed(1)} MB`
-      : `${Math.max(1, Math.round(s.store_bytes / 1024))} kB`;
-  return `${s.total}▤ · ${size}`;
+  return s.total === 1 ? "1 Record" : `${s.total} Records`;
 }
 
 /** Dialog lines: the header (entries + size) then one line per kind. */
@@ -187,7 +184,8 @@ export function formatMemorySidebarExpanded(
 
 /**
  * Collapsed sidebar: the quota-style one-liner, built with the same segment
- * grammar as the expanded panel. Only the title is bold (entity); the whole
+ * grammar as the expanded panel. The title carries the state toggle (`▶`
+ * against the expanded `▼`) and is the only bold (entity) segment; the whole
  * line is the clickable header. "Rec" never pluralizes. "Memory (no store)"
  * for an empty store, so the slot stays hidden instead of advertising nothing.
  */
@@ -200,7 +198,7 @@ export function formatMemorySidebarCollapsed(s: MemorySidebarSnapshot): SidebarS
       ? `${(s.store_bytes / 1_048_576).toFixed(1)} MB`
       : `${Math.max(1, Math.round(s.store_bytes / 1024))} kB`;
   const line: SidebarSegment[] = [
-    { text: "Memory", tone: "entity" },
+    { text: "▶ Memory", tone: "entity" },
     { text: " · ", tone: "value" },
     { text: `${s.live}`, tone: "qualifier" },
     { text: " Rec", tone: "value" },
