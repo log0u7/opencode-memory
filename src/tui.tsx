@@ -24,17 +24,23 @@ const REFRESH_MS = 30_000;
 /** quota-style event refresh: debounced immediate refresh after activity. */
 const EVENT_DEBOUNCE_MS = 150;
 
-function themedFooter(theme: Theme, label: () => string | null): JSX.Element {
+function themedFooter(theme: Theme, label: () => SidebarSegment[] | null): JSX.Element {
   return (
     <box flexDirection="row" gap={1}>
       <text fg={theme.text.base} wrapMode="none">
         <b>Memory</b>
       </text>
       <Show when={label()} keyed>
-        {(text) => (
-          <text fg={theme.text.muted} wrapMode="none">
-            {text}
-          </text>
+        {(segments) => (
+          <box flexDirection="row" gap={0}>
+            <For each={segments}>
+              {(seg) => (
+                <text fg={toneFg(theme, seg.tone)} wrapMode="none">
+                  {seg.text}
+                </text>
+              )}
+            </For>
+          </box>
         )}
       </Show>
     </box>
@@ -138,7 +144,7 @@ export default Plugin.define({
 
     // Live footer + sidebar: poll both server-side snapshots over RPC. On a v1
     // host (no RPC) or while the setup side is unreachable, both stay hidden.
-    const [label, setLabel] = createSignal<string | null>(null);
+    const [label, setLabel] = createSignal<SidebarSegment[] | null>(null);
     const [dialogSnapshot, setDialogSnapshot] = createSignal<MemorySnapshot | null>(null);
     const memory = context.client.rpc(MemoryRpc);
     const refresh = async () => {

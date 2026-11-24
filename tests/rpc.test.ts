@@ -48,24 +48,36 @@ describe("snapshotFromStats", () => {
 });
 
 describe("formatMemoryLine", () => {
-  it("renders the record count without size or glyph", () => {
+  it("renders count and size as tone segments: N Records · N MB", () => {
     const line = formatMemoryLine({
       total: 23,
       store_bytes: 1_200_000,
       top_kinds: ["decision: 12", "fact: 8"],
       all_kinds: ["decision: 12", "fact: 8"],
     });
-    expect(line).toBe("23 Records");
+    expect(line).toEqual([
+      { text: "23", tone: "qualifier" },
+      { text: " Records", tone: "value" },
+      { text: " · ", tone: "value" },
+      { text: "1.1", tone: "qualifier" },
+      { text: " MB", tone: "value" },
+    ]);
   });
 
-  it("singularizes Record for exactly one entry", () => {
+  it("singularizes Record and reads kB below 1 MiB", () => {
     const line = formatMemoryLine({
       total: 1,
       store_bytes: 4096,
       top_kinds: ["fact: 1"],
       all_kinds: ["fact: 1"],
     });
-    expect(line).toBe("1 Record");
+    expect(line).toEqual([
+      { text: "1", tone: "qualifier" },
+      { text: " Record", tone: "value" },
+      { text: " · ", tone: "value" },
+      { text: "4", tone: "qualifier" },
+      { text: " kB", tone: "value" },
+    ]);
   });
 
   it("stays null for an empty store", () => {
