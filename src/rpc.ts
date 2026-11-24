@@ -157,7 +157,7 @@ export function formatMemorySidebarExpanded(
   // 2 kinds fit the panel width, and a hard cut made the labels unreadable
   // ("300 fa · 1 les") — seen live. The renderer wraps pathological cases.
   for (let i = 0; i < kinds.length; i += 2) {
-    const line: SidebarSegment[] = [{ text: "  ☰  ", tone: "qualifier" }];
+    const line: SidebarSegment[] = [{ text: "  ≡  ", tone: "qualifier" }];
     kinds.slice(i, i + 2).forEach((row, j) => {
       if (j > 0) {
         line.push({ text: " · ", tone: "value" });
