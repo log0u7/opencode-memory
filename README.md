@@ -8,7 +8,7 @@
 
 Working memory for [OpenCode](https://opencode.ai): a shared SQLite store that all sessions on a machine read and write, so decisions, facts, and lessons survive session boundaries. And when compaction hits, the full transcript is exported and a ~120-token pointer replaces the lossy summary: exact recall, zero model tokens.
 
-Every session gets the memory tools (`memory_save`, `memory_search`, `memory_list`, `memory_get`, `memory_forget`, `memory_stats`, `memory_restore`, `memory_sweep`) plus transcript search, reading and cleanup when context retrieval is enabled. Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, entries matching every query token first, then prefix matches fill the remaining slots). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
+Every session gets the memory tools (`memory_save`, `memory_search`, `memory_list`, `memory_get`, `memory_forget`, `memory_stats`, `memory_restore`, `memory_sweep`, `memory_endorse`, `memory_export`, `memory_import`) plus transcript search, reading and cleanup when context retrieval is enabled. Entries are scoped per project worktree (plus a `global` scope), searched with SQLite FTS5 (BM25 ranking, entries matching every query token first, then prefix matches fill the remaining slots). Recent entries are also injected into the prompt: once per session, and again during compaction. 100% local, no cloud, no API keys.
 
 ## Why
 
@@ -46,8 +46,11 @@ sequenceDiagram
 - **Lossless compaction.** The summary model call is replaced by a pointer: the transcript path, the last user request, and the retrieval rule. Zero model tokens, nothing paraphrased away, no dependency on a prompt cache.
 - **Memory that outlives sessions.** One SQLite store (WAL mode, FTS5 BM25 ranking) shared by every session on the machine, scoped per project worktree plus a `global` scope. Recent entries are injected into the prompt automatically.
 - **The agent writes its own memory.** The system prompt nudges it to save durable decisions, facts, preferences and gotchas as they emerge; distilled lessons (`kind=lesson`) are injected first in later sessions, so known mistakes are not retried.
+- **Lessons that heat up.** A lesson re-recorded (same angle revisited) gains heat; hot lessons (heat >= 2) are injected FIRST and exempt from the injection budget, so a recurring mistake is seen before it repeats. Anchored lessons self-stale when the code moves and cool down at sweep once the discipline lives in the code.
 - **Exact recall from past sessions.** `memory_session_search` greps exported transcripts for exact lines with context; `memory_session_read` reads a numbered window; `/memory-continue <sessionID>` brings a past session back into the current one.
-- **Optional LLM reflection.** On session idle, one bounded call distils lessons from the transcript tail (~2k input tokens, ~$0.001 with a small model). Off by default.
+- **Token economy.** Search results serve 500-char previews with a real-length marker; `memory_get(id)` returns the complete entry on demand: the 20k-token search wall is gone.
+- **Self-reflection, inference-only.** The system prompt directs the running model itself to distill its errors into lessons (`memory_save` kind=lesson), no separate model call, no fine-tuning: the model is frozen, the memory learns. Configurable via `reflection: { enabled, ... }` (options in the Feedback loop section below); no daily cap: bursts are legitimate (fresh install, new model), and the store's own guards (title dedup + heat, supersede suggestions, sweep) carry the hygiene.
+- **Cross-host sync.** Paired [opencode-mesh](https://www.npmjs.com/package/@log0u7/opencode-mesh) hosts exchange endorsed entries automatically: `memory_endorse` (or `shareable: true` at save) marks an entry worth sharing, the housekeeping pass exports it to the mesh outbox, the mesh pushes it TLS-pinned every 15 min, and the peer imports it into its `global` scope. One agent's lesson becomes the fleet's lesson.
 - **Safe by default.** Secret-shaped strings are refused at write time; deletes go to a restorable trash; query deletes never cross scopes; tool results are size-capped; everything stays on the machine - no cloud, no API keys.
 
 ## Safety limits
@@ -156,7 +159,11 @@ One SQLite store (WAL mode, concurrent-safe) holds the entries; the transcripts 
 
 The agent is nudged to write memory itself: the system prompt asks for durable decisions, facts, preferences and gotchas as they emerge, and the compaction prompt repeats the instruction next to the store inventory. Reusable lessons (`kind=lesson`: a non-obvious approach that clearly failed or succeeded, and why) are injected first in later sessions, so known mistakes are not retried.
 
-Optional LLM reflection, off by default: on `session.idle` the plugin sends the last `transcriptChars` of the session to one bounded LLM call and saves the distilled lessons through the same store (the secret guard applies). Subagent sessions are skipped and at most one reflection runs per session.
+Reflection is a standing directive by default (inference-only): the system prompt directs the running model to distill its lessons itself when corrected or when an approach fails (`memory_save(kind=lesson, paths=[...])`), no separate model call. It is on by default; `reflection: false` (or an object config without `enabled: true`) switches it off.
+
+There is no per-day cap on lesson saves: a burst (fresh install, new model) legitimately produces many lessons at once, and the anti-spam work is the quality bar in the directive, the replace-by-title dedup (with heat), the supersede suggestion at save, and the sweep.
+
+The optional LLM reflection (opt-in legacy) distills lessons with one bounded call instead: with `{ "reflection": { "enabled": true } }`, on `session.idle` the plugin sends the last `transcriptChars` of the session to one LLM call and saves the distilled lessons through the same store (the secret guard applies). Subagent sessions are skipped and at most one reflection runs per session.
 
 ```json
 {
@@ -166,9 +173,7 @@ Optional LLM reflection, off by default: on `session.idle` the plugin sends the 
 }
 ```
 
-Options: `enabled` (default `false`), `model` (`"provider/model"`, default: the host's model), `transcriptChars` (default 8000). There is no per-day cap on lesson saves: a burst (fresh install, new model) legitimately produces many lessons at once, and the anti-spam work is the quality bar in the directive, the replace-by-title dedup, and the sweep.
-
-Cost per reflection: ~2k input tokens (the bounded transcript) and at most ~300 output tokens, at most once per session: roughly $0.001 with a small model, $0.01 with a frontier model (indicative). The nudges and injections are plain text: they cost nothing.
+Options (LLM reflection): `enabled`, `model` (`"provider/model"`, default: the host's model), `transcriptChars` (default 8000), `timeoutMs` (default 60000). Cost per run: ~2k input tokens (the bounded transcript) and at most ~300 output tokens, at most once per session: roughly $0.001 with a small model, $0.01 with a frontier model (indicative). The directive and the injections are plain text: they cost nothing.
 
 ### Context retrieval
 
