@@ -277,7 +277,7 @@ export const MemoryV2 = Plugin.define({
             },
             supersedes: {
               type: "string",
-              description: "Id of the entry this one replaces",
+              description: "Id of the entry this one replaces (8-char prefix accepted)",
             },
             shareable: {
               type: "boolean",
@@ -320,7 +320,7 @@ export const MemoryV2 = Plugin.define({
           properties: {
             query: { type: "string", description: "Free-text query" },
             scope: { type: "string", description: "Scope key; defaults to the project directory" },
-            limit: { type: "number", description: "Max results (default 10)" },
+            limit: { type: "number", description: "Max results (default 5)" },
           },
           required: ["query"],
           additionalProperties: false,
@@ -331,6 +331,8 @@ export const MemoryV2 = Plugin.define({
             content: ops.search(
               { query: a.query, ...(a.limit !== undefined ? { limit: a.limit } : {}) },
               defaultScope(undefined, a.scope ?? ctx.location.directory),
+              // The lib marks stale anchoring per hit when it knows the checkout.
+              { directory: ctx.location.directory },
             ),
           };
         },
@@ -343,16 +345,21 @@ export const MemoryV2 = Plugin.define({
           type: "object",
           properties: {
             scope: { type: "string", description: "Scope key; defaults to the project directory" },
-            limit: { type: "number", description: "Max results (default 20)" },
+            limit: { type: "number", description: "Max results (default 10)" },
+            page: { type: "number", description: "1-based page of results (default 1)" },
           },
           additionalProperties: false,
         },
         async execute(args) {
-          const a = args as { scope?: string; limit?: number };
+          const a = args as { scope?: string; limit?: number; page?: number };
           return {
             content: ops.list(
-              a.limit !== undefined ? { limit: a.limit } : {},
+              {
+                ...(a.limit !== undefined ? { limit: a.limit } : {}),
+                ...(a.page !== undefined ? { page: a.page } : {}),
+              },
               defaultScope(undefined, a.scope ?? ctx.location.directory),
+              { directory: ctx.location.directory },
             ),
           };
         },
@@ -364,7 +371,10 @@ export const MemoryV2 = Plugin.define({
         input: {
           type: "object",
           properties: {
-            id: { type: "string", description: "Entry id to fetch in full" },
+            id: {
+              type: "string",
+              description: "Entry id to fetch in full (8-char prefix accepted)",
+            },
           },
           required: ["id"],
           additionalProperties: false,
@@ -381,7 +391,10 @@ export const MemoryV2 = Plugin.define({
         input: {
           type: "object",
           properties: {
-            id: { type: "string", description: "Entry id to delete" },
+            id: {
+              type: "string",
+              description: "Entry id to delete (8-char prefix accepted)",
+            },
             query: { type: "string", description: "Delete every entry matching this query" },
           },
           additionalProperties: false,
@@ -414,7 +427,10 @@ export const MemoryV2 = Plugin.define({
         input: {
           type: "object",
           properties: {
-            id: { type: "string", description: "Id of a trashed entry to put back" },
+            id: {
+              type: "string",
+              description: "Id of a trashed entry to put back (8-char prefix accepted)",
+            },
           },
           required: ["id"],
           additionalProperties: false,
@@ -489,7 +505,10 @@ export const MemoryV2 = Plugin.define({
         input: {
           type: "object",
           properties: {
-            id: { type: "string", description: "Entry id to endorse" },
+            id: {
+              type: "string",
+              description: "Entry id to endorse (8-char prefix accepted)",
+            },
             endorser: {
               type: "string",
               description: "Endorsing agent; defaults to the calling agent",

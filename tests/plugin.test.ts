@@ -149,8 +149,9 @@ describe("memory plugin tools", () => {
     const listed = await tools.memory_list?.execute({}, ctx());
     expect(listed).toContain("Adopt batching");
 
-    const all = JSON.parse(String(listed)) as Array<{ id: string }>;
-    const forgotten = await tools.memory_forget?.execute({ id: all[0]?.id }, ctx());
+    // The id8 heading each line resolves through memory_forget.
+    const id8 = /^([0-9a-f]{8}) /m.exec(String(listed))?.[1] ?? "";
+    const forgotten = await tools.memory_forget?.execute({ id: id8 }, ctx());
     expect(forgotten).toContain("1");
   });
 
@@ -218,8 +219,9 @@ describe("memory plugin tools", () => {
     const raw = String(
       await tools.memory_search?.execute({ query: "postgres", limit: 1e9 }, ctx()),
     );
-    expect(JSON.parse(raw)).toHaveLength(MAX_LIMIT);
-    expect(raw).toContain('"truncated":8000');
+    // Header plus MAX_LIMIT hit lines.
+    expect(raw.split("\n")).toHaveLength(MAX_LIMIT + 1);
+    expect(raw).toContain("truncated:8000");
   });
 
   it("refuses credentials hidden in the title", async () => {
@@ -429,11 +431,14 @@ describe("memory plugin reflection", () => {
   });
 
   it("records the calling agent as the writer of an entry", async () => {
-    const tools = await loadTools({ dbPath: join(dir, "writer.db") });
+    const dbPath = join(dir, "writer.db");
+    const tools = await loadTools({ dbPath });
     await tools.memory_save?.execute({ kind: "fact", title: "agent note", body: "b" }, ctx());
 
-    const listed = JSON.parse((await tools.memory_list?.execute({}, ctx())) ?? "[]");
-    expect(listed[0].source).toBe("build");
+    // The compact list lines carry no source field: read the store instead.
+    const db = openMemoryDb(dbPath);
+    expect(list(db, { scope: WORKTREE })[0]?.source).toBe("build");
+    db.close();
   });
 
   it("aborts a hanging reflection call and still deletes the child session", async () => {

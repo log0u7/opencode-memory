@@ -201,7 +201,10 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
             .describe(
               "Files the entry documents (relative project paths): the entry is stale when any of them changes",
             ),
-          supersedes: tool.schema.string().optional().describe("Id of the entry this one replaces"),
+          supersedes: tool.schema
+            .string()
+            .optional()
+            .describe("Id of the entry this one replaces (8-char prefix accepted)"),
           shareable: tool.schema
             .boolean()
             .optional()
@@ -227,12 +230,14 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
             .string()
             .optional()
             .describe("Scope key; defaults to this session's worktree"),
-          limit: tool.schema.number().optional().describe("Max results (default 10)"),
+          limit: tool.schema.number().optional().describe("Max results (default 5)"),
         },
         execute: async (args, context) =>
           ops.search(
             { query: args.query, ...(args.limit !== undefined ? { limit: args.limit } : {}) },
             defaultScope(args.scope ?? context.worktree ?? context.directory),
+            // The lib marks stale anchoring per hit when it knows the checkout.
+            { directory: context.directory ?? context.worktree ?? process.cwd() },
           ),
       }),
 
@@ -243,19 +248,24 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
             .string()
             .optional()
             .describe("Scope key; defaults to this session's worktree"),
-          limit: tool.schema.number().optional().describe("Max results (default 20)"),
+          limit: tool.schema.number().optional().describe("Max results (default 10)"),
+          page: tool.schema.number().optional().describe("1-based page of results (default 1)"),
         },
         execute: async (args, context) =>
           ops.list(
-            args.limit !== undefined ? { limit: args.limit } : {},
+            {
+              ...(args.limit !== undefined ? { limit: args.limit } : {}),
+              ...(args.page !== undefined ? { page: args.page } : {}),
+            },
             defaultScope(args.scope ?? context.worktree ?? context.directory),
+            { directory: context.directory ?? context.worktree ?? process.cwd() },
           ),
       }),
 
       memory_get: tool({
         description: TOOL_DESCRIPTIONS.get,
         args: {
-          id: tool.schema.string().describe("Entry id to fetch in full"),
+          id: tool.schema.string().describe("Entry id to fetch in full (8-char prefix accepted)"),
         },
         execute: async (args) => ops.get(args),
       }),
@@ -263,7 +273,10 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
       memory_forget: tool({
         description: TOOL_DESCRIPTIONS.forget,
         args: {
-          id: tool.schema.string().optional().describe("Entry id to delete"),
+          id: tool.schema
+            .string()
+            .optional()
+            .describe("Entry id to delete (8-char prefix accepted)"),
           query: tool.schema.string().optional().describe("Delete every entry matching a query"),
         },
         execute: async (args, context) =>
@@ -285,7 +298,9 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
       memory_restore: tool({
         description: TOOL_DESCRIPTIONS.restore,
         args: {
-          id: tool.schema.string().describe("Id of a trashed entry to put back"),
+          id: tool.schema
+            .string()
+            .describe("Id of a trashed entry to put back (8-char prefix accepted)"),
         },
         execute: async (args) => ops.restore(args),
       }),
@@ -293,7 +308,7 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
       memory_endorse: tool({
         description: TOOL_DESCRIPTIONS.endorse,
         args: {
-          id: tool.schema.string().describe("Entry id to endorse"),
+          id: tool.schema.string().describe("Entry id to endorse (8-char prefix accepted)"),
           endorser: tool.schema
             .string()
             .optional()

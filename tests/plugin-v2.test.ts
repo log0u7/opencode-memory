@@ -186,15 +186,16 @@ describe("v1 and v2 share one behaviour", () => {
     const { ctx, added } = fakeCtx(dbPath);
     const cleanupV2 = await pluginModule.setup(ctx);
     const save = added.find((t) => t.name === "memory_save");
-    const list = added.find((t) => t.name === "memory_list");
 
     await save?.execute(
       { kind: "fact", title: "agent note", body: "x" },
       { sessionID: "s1", agent: "build" },
     );
 
-    const content = (await list?.execute({}, { sessionID: "s1" }))?.content ?? "[]";
-    expect(JSON.parse(content)[0].source).toBe("build");
+    // The compact list lines carry no source field: read the store instead.
+    const db = openMemoryDb(dbPath);
+    expect(list(db, { scope: ctx.location.directory })[0]?.source).toBe("build");
+    db.close();
     await cleanupV2?.();
   });
 });
@@ -307,7 +308,8 @@ describe("opencode-memory v2 setup", () => {
     expect(listed?.content).toContain("Use pnpm");
 
     const forget = byName.get("memory_forget");
-    const entryId = JSON.parse(listed?.content ?? "[]")[0]?.id;
+    // The id8 heading each list line resolves through memory_forget.
+    const entryId = /^([0-9a-f]{8}) /m.exec(listed?.content ?? "")?.[1] ?? "";
     const deleted = await forget?.execute({ id: entryId }, { sessionID: "s1" });
     expect(deleted?.content).toContain("deleted 1");
     const after = await search?.execute({ query: "pnpm" }, { sessionID: "s1" });
@@ -394,8 +396,9 @@ describe("opencode-memory v2 setup", () => {
     const rawHuge = String(
       (await search?.execute({ query: "postgres", limit: 1e9 }, { sessionID: "s1" }))?.content,
     );
-    expect(JSON.parse(rawHuge)).toHaveLength(MAX_LIMIT);
-    expect(rawHuge).toContain("truncated");
+    // Header plus MAX_LIMIT hit lines.
+    expect(rawHuge.split("\n")).toHaveLength(MAX_LIMIT + 1);
+    expect(rawHuge).toContain("truncated:8000");
     await cleanup?.();
   });
 

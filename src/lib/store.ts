@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 
 import type { MemoryDb } from "./db.js";
+import { isEntryFresh } from "./git.js";
 import type { Entry, EntryInput } from "../types/entry.js";
 
 const TITLE_MAX = 120;
@@ -18,7 +19,7 @@ export const BODY_PREVIEW_MAX = 500;
  * inventory injects it before everything else, outside the character budget. */
 export const HOT_THRESHOLD = 2;
 
-export const DEFAULT_LIMIT = { search: 10, list: 20 };
+export const DEFAULT_LIMIT = { search: 5, list: 10 };
 
 /** Scope used when no worktree and no directory is known, so rows stay addressable. */
 export const FALLBACK_SCOPE = "/";
@@ -159,18 +160,37 @@ function previewBody(body: string): string {
   return `${head}…`;
 }
 
+/** Newlines collapse to spaces: a one-line-per-hit result must stay one line. */
+function flatten(text: string): string {
+  return text.replaceAll(/\s+/g, " ").trim();
+}
+
 /**
- * Model-facing rendering of a result set. Compact JSON and truncated bodies keep a
- * tool result inside a known size regardless of how much is stored. A truncated hit
- * carries its real body length in `truncated`: the full text comes from memory_get.
+ * Model-facing rendering of a result set: one stable line per entry, headed by the
+ * 8-char id prefix the caller copies into memory_get. Metadata rides as a suffix only
+ * when it says something (hot, stale anchoring, first anchored path, truncated body),
+ * so a plain short hit costs ~120 chars instead of a full JSON object. A truncated
+ * hit carries its real body length in `truncated`: the full text comes from memory_get.
  */
-export function renderEntries(entries: Entry[]): string {
-  return JSON.stringify(
-    entries.map((entry) => {
-      const body = previewBody(entry.body);
-      return entry.body === body ? entry : { ...entry, body, truncated: entry.body.length };
-    }),
-  );
+export function renderEntries(entries: Entry[], options: { directory?: string } = {}): string {
+  return entries
+    .map((entry) => {
+      let line = `${entry.id.slice(0, 8)} ${entry.kind} ${flatten(entry.title)} — ${flatten(previewBody(entry.body))}`;
+      if ((entry.heat ?? 0) >= HOT_THRESHOLD) {
+        line += " · hot";
+      }
+      if (options.directory !== undefined && !isEntryFresh(entry, options.directory)) {
+        line += " · stale";
+      }
+      if (entry.paths !== undefined && entry.paths.length > 0) {
+        line += ` · ${entry.paths[0]}`;
+      }
+      if (entry.body.length > BODY_PREVIEW_MAX) {
+        line += ` · truncated:${entry.body.length}`;
+      }
+      return line;
+    })
+    .join("\n");
 }
 
 export function sweep(db: MemoryDb, options: { now?: number } = {}): number {
@@ -509,13 +529,20 @@ function ftsHits(db: MemoryDb, match: string, scope: string, now: number, limit:
 
 export function list(
   db: MemoryDb,
-  query: { scope: string; limit?: number; now?: number; kind?: string },
+  query: { scope: string; limit?: number; now?: number; kind?: string; page?: number },
 ): Entry[] {
   const scope = canonicalScope(query.scope);
   const limit = clampLimit(query.limit, DEFAULT_LIMIT.list);
   const now = query.now ?? Date.now();
   const kindFilter = query.kind === undefined ? "" : "AND kind = ? ";
   const kindArgs = query.kind === undefined ? [] : [query.kind];
+  // Pages are 1-based; a nonsensical page reads as the first one instead of a
+  // negative OFFSET, which SQLite would reject.
+  const page =
+    query.page === undefined || !Number.isFinite(query.page) || query.page < 1
+      ? 1
+      : Math.trunc(query.page);
+  const offset = (page - 1) * limit;
 
   return db.conn
     .all<Row>(
@@ -523,8 +550,8 @@ export function list(
        WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?) ${kindFilter}
          AND status = 'current' AND ${LIVE}
        ORDER BY updated_at DESC, id ASC
-       LIMIT ?`,
-      [scope, now, ...kindArgs, limit],
+       LIMIT ? OFFSET ?`,
+      [scope, now, ...kindArgs, limit, offset],
     )
     .map(rowToEntry);
 }
@@ -583,6 +610,31 @@ export function getById(db: MemoryDb, id: string): { entry: Entry; trashed: bool
     return null;
   }
   return { entry: rowToEntry(row), trashed: row.deleted_at !== null };
+}
+
+/**
+ * Resolve an entry id given in full or as a leading prefix (the 8-char id8 the compact
+ * search and list lines hand to the model). Exact-prefix match over every stored row:
+ * trashed and superseded rows stay addressable, since memory_restore needs them too.
+ * `null` when nothing matches; throws naming the full candidate ids when a prefix is
+ * ambiguous, so the caller reports instead of guessing a row.
+ */
+export function resolveIdPrefix(db: MemoryDb, prefix: string): string | null {
+  const wanted = prefix.trim();
+  if (wanted.length === 0) {
+    return null;
+  }
+  const matches = db.conn
+    .all<{ id: string }>("SELECT id FROM entries")
+    .map((row) => row.id)
+    .filter((id) => id.startsWith(wanted));
+  if (matches.length === 0) {
+    return null;
+  }
+  if (matches.length > 1) {
+    throw new Error(`ambiguous id prefix ${wanted}: ${matches.join(", ")}`);
+  }
+  return matches[0] as string;
 }
 
 export type ForgetTarget = { scope: string } & ({ id: string } | { query: string });

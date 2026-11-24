@@ -659,15 +659,19 @@ describe("store rendering", () => {
     const rendered = renderEntries(entries);
 
     expect(rendered.length).toBeLessThan(BODY_PREVIEW_MAX + 500);
-    expect(rendered).toContain('"truncated":8000');
+    expect(rendered).toContain("truncated:8000");
     expect(rendered).toContain(entries[0]?.title ?? "");
     db.close();
   });
 
-  it("renders entries as compact json, not pretty printed", () => {
+  it("renders one stable line per entry with the id8 first, not json", () => {
     const db = openMemoryDb(":memory:");
     const entries = [save(db, input())];
-    expect(renderEntries(entries)).not.toContain("\n");
+    const rendered = renderEntries(entries);
+    expect(rendered).toMatch(
+      /^[0-9a-f]{8} decision Use batching for migration — Migrate postgres rows in batches of 1000 to avoid lock contention\.$/m,
+    );
+    expect(rendered).not.toContain("{");
     db.close();
   });
 });
