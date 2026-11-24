@@ -27,25 +27,38 @@ export function snapshotFromStats(
   };
 }
 
-/** One footer line: "23 Records" ("1 Record" singular). Null for an empty
- * store, so the slot stays hidden instead of advertising nothing. The kind
- * breakdown lives in the sidebar and memory_stats — the footer stays one
+/** Human store size parts: one decimal in MB from 1 MiB up, whole kB below.
+ * Returned as [value, unit] so callers can tone the number and the label apart. */
+export function storeSizeParts(bytes: number): [value: string, unit: string] {
+  return bytes >= 1_048_576
+    ? [(bytes / 1_048_576).toFixed(1), "MB"]
+    : [`${Math.max(1, Math.round(bytes / 1024))}`, "kB"];
+}
+
+/** One footer line as tone segments — count in qualifier, labels and the
+ * separator in value: "742 Records · 3.3 MB" ("1 Record" singular). Null for
+ * an empty store, so the slot stays hidden instead of advertising nothing. The
+ * kind breakdown lives in the sidebar and memory_stats — the footer stays one
  * compact fact. The host already labels the slot "Memory", so the line carries
  * no prefix. */
-export function formatMemoryLine(s: MemorySnapshot): string | null {
+export function formatMemoryLine(s: MemorySnapshot): SidebarSegment[] | null {
   if (s.total === 0) {
     return null;
   }
-  return s.total === 1 ? "1 Record" : `${s.total} Records`;
+  const [sizeNum, sizeUnit] = storeSizeParts(s.store_bytes);
+  return [
+    { text: `${s.total}`, tone: "qualifier" },
+    { text: s.total === 1 ? " Record" : " Records", tone: "value" },
+    { text: " · ", tone: "value" },
+    { text: sizeNum, tone: "qualifier" },
+    { text: ` ${sizeUnit}`, tone: "value" },
+  ];
 }
 
 /** Dialog lines: the header (entries + size) then one line per kind. */
 export function formatMemoryDialog(s: MemorySnapshot): string[] {
-  const size =
-    s.store_bytes >= 1_048_576
-      ? `${(s.store_bytes / 1_048_576).toFixed(1)} MB`
-      : `${Math.max(1, Math.round(s.store_bytes / 1024))} kB`;
-  return [`memory: ${s.total} entries · ${size}`, ...s.all_kinds];
+  const [sizeNum, sizeUnit] = storeSizeParts(s.store_bytes);
+  return [`memory: ${s.total} entries · ${sizeNum} ${sizeUnit}`, ...s.all_kinds];
 }
 
 export type MemorySidebarSnapshot = {
@@ -186,30 +199,30 @@ export function formatMemorySidebarExpanded(
  * Collapsed sidebar: the quota-style one-liner, built with the same segment
  * grammar as the expanded panel. The title carries the state toggle (`▶`
  * against the expanded `▼`) and is the only bold (entity) segment; the whole
- * line is the clickable header. "Rec" never pluralizes. "Memory (no store)"
- * for an empty store, so the slot stays hidden instead of advertising nothing.
+ * line is the clickable header. Numbers read in qualifier, labels and the
+ * separators in value. "Memory (no store)" for an empty store, so the slot
+ * stays hidden instead of advertising nothing.
  */
 export function formatMemorySidebarCollapsed(s: MemorySidebarSnapshot): SidebarSegment[][] {
   if (!s.store) {
     return [[{ text: "Memory (no store)", tone: "entity" }]];
   }
-  const size =
-    s.store_bytes >= 1_048_576
-      ? `${(s.store_bytes / 1_048_576).toFixed(1)} MB`
-      : `${Math.max(1, Math.round(s.store_bytes / 1024))} kB`;
+  const [sizeNum, sizeUnit] = storeSizeParts(s.store_bytes);
   const line: SidebarSegment[] = [
     { text: "▶ Memory", tone: "entity" },
     { text: " · ", tone: "value" },
     { text: `${s.live}`, tone: "qualifier" },
-    { text: " Rec", tone: "value" },
+    { text: s.live === 1 ? " Record" : " Records", tone: "value" },
     { text: " · ", tone: "value" },
-    { text: size, tone: "value" },
+    { text: sizeNum, tone: "qualifier" },
+    { text: ` ${sizeUnit}`, tone: "value" },
   ];
   if (s.hot > 0) {
     line.push(
       { text: " · ", tone: "value" },
       { text: "● ", tone: "alert" },
-      { text: `${s.hot} hot`, tone: "qualifier" },
+      { text: `${s.hot}`, tone: "qualifier" },
+      { text: " hot", tone: "value" },
     );
   }
   return [line];

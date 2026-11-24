@@ -210,21 +210,30 @@ describe("formatMemorySidebarCollapsed", () => {
     ]);
   });
 
-  it("renders the quota-style one-liner: ▶ Memory · N Rec · size · ● N hot", () => {
+  it("renders the quota-style one-liner: ▶ Memory · N Records · size · ● N hot", () => {
     const snap = { ...base, live: 699, stale: 3, shareable: 5, hot: 2, store_bytes: 3_145_728 };
-    expect(formatMemorySidebarCollapsed(snap)).toEqual([
-      [
-        { text: "▶ Memory", tone: "entity" },
-        { text: " · ", tone: "value" },
-        { text: "699", tone: "qualifier" },
-        { text: " Rec", tone: "value" },
-        { text: " · ", tone: "value" },
-        { text: "3.0 MB", tone: "value" },
-        { text: " · ", tone: "value" },
-        { text: "● ", tone: "alert" },
-        { text: "2 hot", tone: "qualifier" },
-      ],
+    const [line] = formatMemorySidebarCollapsed(snap);
+    // Every separator carries its own spaces: nothing renders glued.
+    expect(renderLine(line)).toBe("▶ Memory · 699 Records · 3.0 MB · ● 2 hot");
+    expect(line).toEqual([
+      { text: "▶ Memory", tone: "entity" },
+      { text: " · ", tone: "value" },
+      { text: "699", tone: "qualifier" },
+      { text: " Records", tone: "value" },
+      { text: " · ", tone: "value" },
+      { text: "3.0", tone: "qualifier" },
+      { text: " MB", tone: "value" },
+      { text: " · ", tone: "value" },
+      { text: "● ", tone: "alert" },
+      { text: "2", tone: "qualifier" },
+      { text: " hot", tone: "value" },
     ]);
+  });
+
+  it("singularizes Record for exactly one live entry", () => {
+    const snap = { ...base, live: 1, hot: 0, store_bytes: 1_048_576 };
+    const [line] = formatMemorySidebarCollapsed(snap);
+    expect(renderLine(line)).toBe("▶ Memory · 1 Record · 1.0 MB");
   });
 
   it("drops the hot marker when it is zero", () => {
@@ -234,9 +243,10 @@ describe("formatMemorySidebarCollapsed", () => {
         { text: "▶ Memory", tone: "entity" },
         { text: " · ", tone: "value" },
         { text: "10", tone: "qualifier" },
-        { text: " Rec", tone: "value" },
+        { text: " Records", tone: "value" },
         { text: " · ", tone: "value" },
-        { text: "1.0 MB", tone: "value" },
+        { text: "1.0", tone: "qualifier" },
+        { text: " MB", tone: "value" },
       ],
     ]);
   });
