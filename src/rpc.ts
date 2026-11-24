@@ -27,8 +27,9 @@ export function snapshotFromStats(
   };
 }
 
-/** One footer line: "memory: 23 entries · 1.1 MB · decision: 12, fact: 8". Null for
- * an empty store, so the slot stays hidden instead of advertising nothing. */
+/** One footer line: "memory: ▤23 · 1.1 MB". Null for an empty store, so the slot
+ * stays hidden instead of advertising nothing. The kind breakdown lives in the
+ * sidebar and memory_stats — the footer stays one compact fact. */
 export function formatMemoryLine(s: MemorySnapshot): string | null {
   if (s.total === 0) {
     return null;
@@ -37,8 +38,7 @@ export function formatMemoryLine(s: MemorySnapshot): string | null {
     s.store_bytes >= 1_048_576
       ? `${(s.store_bytes / 1_048_576).toFixed(1)} MB`
       : `${Math.max(1, Math.round(s.store_bytes / 1024))} kB`;
-  const kinds = s.top_kinds.length > 0 ? ` · ${s.top_kinds.join(", ")}` : "";
-  return `memory: ${s.total} entries · ${size}${kinds}`;
+  return `memory: ▤${s.total} · ${size}`;
 }
 
 /** Dialog lines: the header (entries + size) then one line per kind. */
@@ -54,6 +54,8 @@ export type MemorySidebarSnapshot = {
   /** False when the store file does not exist yet: the sidebar falls back to a
    * single "Memory (no store)" line. */
   store: boolean;
+  /** The SQLite file size in bytes: the collapsed header shows it compactly. */
+  store_bytes: number;
   /** Usable entries machine-wide: current, not trashed, not expired. */
   live: number;
   /** Rows in the trash (recoverable through memory_restore for 30 days). */
@@ -85,6 +87,7 @@ export type MemorySidebarSnapshot = {
 export function noStoreSidebar(): MemorySidebarSnapshot {
   return {
     store: false,
+    store_bytes: 0,
     live: 0,
     trashed: 0,
     kinds: [],
@@ -185,17 +188,19 @@ export function formatMemorySidebarExpanded(
  * Collapsed sidebar (unchanged two-line shape) plus the no-store fallback.
  * Line 0 is the clickable header, the rest are muted count lines.
  */
+/** One collapsed sidebar line: "▶ Memory ▤699 · 3.0 MB" (+ " ● N hot" when hot).
+ * "Memory (no store)" for an empty store, so the slot stays hidden instead of
+ * advertising nothing. */
 export function formatMemorySidebarCollapsed(s: MemorySidebarSnapshot): string[] {
   if (!s.store) {
     return ["Memory (no store)"];
   }
-  const header = s.hot > 0 ? `▶ Memory ● ${s.hot} hot` : "▶ Memory";
-  const parts = [`${s.live} entries`];
-  if (s.stale > 0) {
-    parts.push(`${s.stale} stale`);
-  }
-  parts.push(`${s.shareable} to share`);
-  return [header, parts.join(" · ")];
+  const size =
+    s.store_bytes >= 1_048_576
+      ? `${(s.store_bytes / 1_048_576).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(s.store_bytes / 1024))} kB`;
+  const hot = s.hot > 0 ? ` ● ${s.hot} hot` : "";
+  return [`▶ Memory ▤${s.live} · ${size}${hot}`];
 }
 
 export const MemoryRpc = Rpc.define({
