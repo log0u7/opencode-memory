@@ -743,7 +743,7 @@ describe("opencode-memory v2 setup", () => {
     await cleanup?.();
   });
 
-  it("injects the inventory once per session on the first request that has entries", async () => {
+  it("re-injects the same inventory on every request of a session (stable prefix)", async () => {
     const dbPath = tmpDbPath();
     const { ctx, added, sessionHooks } = fakeCtx(dbPath);
     const cleanup = await pluginModule.setup(ctx);
@@ -767,8 +767,7 @@ describe("opencode-memory v2 setup", () => {
 
     const second = event("s1");
     context?.(second as never);
-    expect(second.system).toHaveLength(1);
-    expect(second.system[0]?.text).toContain("memory_search");
+    expect(second.system).toEqual(first.system);
 
     const third = event("s2");
     context?.(third as never);

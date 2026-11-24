@@ -29,6 +29,8 @@ export type PluginOptions = {
   housekeeping?: boolean;
   /** Age (in days) after which a dated entry becomes sweepable. Default 7. */
   sweepTtlDays?: number;
+  /** Terse guidance and terse entries when caveman is installed. Default "auto" (detect). */
+  caveman?: "auto" | boolean;
 };
 
 export const SYSTEM_GUIDANCE = `You have persistent working memory shared with all OpenCode sessions on this machine.
@@ -36,6 +38,17 @@ Recent entries are listed above when present; run memory_search for anything old
 When you make a durable decision or learn a lasting fact, call memory_save (kinds: decision, fact, preference, gotcha).
 When a non-obvious approach clearly fails or succeeds, save the lesson (kind=lesson) as soon as it is confirmed, and check stored lessons before retrying a failed approach.
 Never store credentials, tokens, or API keys in memory; the store refuses them.`;
+
+/** Guidance used instead of SYSTEM_GUIDANCE when caveman is active: same rules,
+ * fewer tokens, plus the instruction to store entries in the compressed register. */
+export const SYSTEM_GUIDANCE_CAVEMAN = `Persistent memory, shared by all OpenCode sessions on this machine. Recent entries listed above; memory_search for older or specific.
+Durable decision, fact, preference, gotcha: memory_save. Approach clearly fails or works: save kind=lesson once confirmed; check lessons before retrying a failed approach.
+Write entries caveman-terse: no articles, filler or hedging, fragments fine. Code, paths, identifiers, commands, numbers, error text stay exact.
+Never store credentials, tokens, API keys; store refuses them.`;
+
+export const COMPACTION_CONTEXT_CAVEMAN =
+  "Compaction. After it: memory_save each durable decision still relevant (kind=decision), new facts (kind=fact), " +
+  "lessons confirmed this session (kind=lesson). Terse entries.";
 
 export const COMPACTION_CONTEXT =
   "The session is being compacted. After compaction, call memory_save for every durable decision still relevant " +

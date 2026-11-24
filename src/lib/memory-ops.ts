@@ -340,31 +340,39 @@ export const TOOL_DESCRIPTIONS = {
 } as const;
 
 /**
- * Produces at most one injection per session key, and only on the first request where
- * the producer has something: a session that starts before any entry exists still gets
- * its inventory as soon as one is available. Keys are capped so a long-lived host
- * cannot grow the set forever; an absent sessionID (v1 marks it optional) degrades to
- * one injection per plugin instance, never per request.
+ * Sticky per-session injection: the first request where the producer has something
+ * computes the text, every later request of the same session gets the SAME string
+ * back. The host rebuilds the system prompt on every LLM call (each tool-loop step
+ * included), so a block injected only once vanishes from step 2 on and the changed
+ * prefix defeats the provider's prompt cache (and llama.cpp's slot cache) — the
+ * whole context is re-prefilled. A byte-identical block stays cached, so repeating
+ * it is nearly free, while dropping it is not. Keys are capped by evicting the
+ * oldest session only, so live sessions never see their prefix rebuilt; an absent
+ * sessionID (v1 marks it optional) degrades to one sticky entry per plugin instance.
  */
-export function oncePerSession() {
-  const seen = new Set<string>();
+export function stickyPerSession() {
+  const cache = new Map<string, string>();
   const MAX_KEYS = 512;
   const inject = (key: string | undefined, produce: () => string | null): string | null => {
     const k = key ?? "__instance__";
-    if (seen.has(k)) {
-      return null;
+    const cached = cache.get(k);
+    if (cached !== undefined) {
+      return cached;
     }
     const produced = produce();
     if (produced === null) {
       return null;
     }
-    seen.add(k);
-    if (seen.size > MAX_KEYS) {
-      seen.clear();
+    cache.set(k, produced);
+    if (cache.size > MAX_KEYS) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) {
+        cache.delete(oldest);
+      }
     }
     return produced;
   };
-  return { inject, reset: () => seen.clear() };
+  return { inject, reset: () => cache.clear() };
 }
 
 /**
