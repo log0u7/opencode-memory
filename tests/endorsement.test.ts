@@ -9,7 +9,14 @@ import { pluginModule } from "../src/index.js";
 import { openMemoryDb, type MemoryDb } from "../src/lib/db.js";
 import { createMemoryOps } from "../src/lib/memory-ops.js";
 import { parseReflectionActivation, reflectionGuidance } from "../src/lib/reflection.js";
-import { allLive, endorseEntry, forget, isShareable, saveEntry } from "../src/lib/store.js";
+import {
+  allLive,
+  endorseEntry,
+  forget,
+  isShareable,
+  listShareableAll,
+  saveEntry,
+} from "../src/lib/store.js";
 
 const dirs: string[] = [];
 let db: MemoryDb;
@@ -184,6 +191,57 @@ describe("shareable at save", () => {
     expect(rewritten.id).toBe(entry.id);
     expect(rewritten.endorsed_by).toEqual(["peer", "author"]);
     expect(isShareable(rewritten)).toBe(true);
+  });
+});
+
+describe("endorsements through supersede", () => {
+  it("a peer endorsement carries through a same-title supersede (replace-by-title)", () => {
+    const entry = save({ source: "author" });
+    endorseEntry(db, { id: entry.id, endorser: "peer" });
+
+    const replacement = save({ source: "author" });
+    expect(replacement.id).toBe(entry.id);
+    expect(replacement.endorsed_by).toEqual(["peer"]);
+    expect(isShareable(replacement)).toBe(true);
+    expect(listShareableAll(db).map((e) => e.id)).toContain(entry.id);
+  });
+
+  it("a peer endorsement carries through an explicit supersedes", () => {
+    const entry = save({ source: "author" });
+    endorseEntry(db, { id: entry.id, endorser: "peer" });
+
+    const replacement = saveEntry(db, {
+      scope: "/w",
+      kind: "fact",
+      title: "share this one",
+      body: "b2",
+      tags: [],
+      expires_at: null,
+      source: "author",
+      supersedes: entry.id,
+    }).entry;
+    expect(replacement.id).not.toBe(entry.id);
+    expect(replacement.endorsed_by).toEqual(["peer"]);
+    expect(isShareable(replacement)).toBe(true);
+    expect(listShareableAll(db).map((e) => e.id)).toContain(replacement.id);
+  });
+
+  it("the author's endorsement does not carry (no self-amplification)", () => {
+    const entry = save({ source: "author", shareable: true });
+    endorseEntry(db, { id: entry.id, endorser: "peer" });
+
+    const replacement = saveEntry(db, {
+      scope: "/w",
+      kind: "fact",
+      title: "share this one",
+      body: "b2",
+      tags: [],
+      expires_at: null,
+      source: "author",
+      supersedes: entry.id,
+    }).entry;
+    expect(replacement.endorsed_by).toEqual(["peer"]);
+    expect(isShareable(replacement)).toBe(true);
   });
 });
 

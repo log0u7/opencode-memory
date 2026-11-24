@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.3] - 2026-11-24
+
+### Fixed
+
+- **Peer endorsements carry through supersede**: superseding an endorsed entry
+  (explicit `supersedes`) used to insert the replacement with no endorsements, so
+  refining a shared entry dropped it from the next outbox push. The replacement now
+  carries the superseded row's endorsements, minus the new entry's own source (the
+  author re-endorsing their own rewrite is exactly the anti-amplification guard, and
+  their shareable-at-save marker stays the only self-endorsement). Replace-by-title
+  already carried endorsements and is unchanged.
+
+### Documentation
+
+- New `docs/CONFIGURATION.md`: every plugin option with its default and effect,
+  taken from the code (`reflection`, `housekeeping`/`sweepTtlDays`, `retrieval`),
+  linked from the README.
+- README: `source` carries the mechanism — only the legacy LLM-distilled lessons
+  carry `reflection`, directive-saved lessons carry the saving agent.
+
 ## [0.20.2] - 2026-11-23
 
 ### Fixed

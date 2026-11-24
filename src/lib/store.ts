@@ -216,9 +216,10 @@ export function saveEntry(
   // saves naming the same target can both claim it. Ceiling is a double tombstone, not
   // data loss. Upgrade path: BEGIN IMMEDIATE around the whole save.
   let supersededId: string | undefined;
+  let supersededEndorsedBy: string | null = null;
   if (input.supersedes !== undefined) {
-    const target = db.conn.get<{ id: string }>(
-      `SELECT id FROM entries WHERE id = ? AND scope = ? AND ${LIVE}`,
+    const target = db.conn.get<{ id: string; endorsed_by: string | null }>(
+      `SELECT id, endorsed_by FROM entries WHERE id = ? AND scope = ? AND ${LIVE}`,
       [input.supersedes, scope],
     );
     if (target === null) {
@@ -229,6 +230,7 @@ export function saveEntry(
       target.id,
     ]);
     supersededId = target.id;
+    supersededEndorsedBy = target.endorsed_by;
   }
 
   // A repeated title in the same scope is the same knowledge: rewrite it instead of
@@ -295,8 +297,16 @@ export function saveEntry(
   // A brand-new lesson starts hot-adjacent (heat 1): the first re-record tips it
   // over HOT_THRESHOLD. Other kinds start at the column default, 0.
   const heat = input.kind === "lesson" ? 1 : 0;
+  // The superseded row's peer endorsements carry to the replacement: refining shared
+  // knowledge must not drop it from the next outbox push. Only peers of the NEW source
+  // carry — the author re-endorsing their own rewrite is exactly the anti-amplification
+  // guard, and their shareable-at-save marker stays the only self-endorsement.
   // Author-published entries (shareable at save) carry the author's endorsement.
-  const endorsers = mergeEndorsement([], input);
+  const peerEndorsers =
+    supersededEndorsedBy === null
+      ? []
+      : parseStringArray(supersededEndorsedBy).filter((endorser) => endorser !== input.source);
+  const endorsers = mergeEndorsement(peerEndorsers, input);
   db.conn.run(
     "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, supersedes, status, superseded_at, heat, endorsed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
