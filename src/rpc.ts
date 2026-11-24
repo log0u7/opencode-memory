@@ -27,9 +27,10 @@ export function snapshotFromStats(
   };
 }
 
-/** One footer line: "memory: ▤23 · 1.1 MB". Null for an empty store, so the slot
+/** One footer line: "23▤ · 1.1 MB". Null for an empty store, so the slot
  * stays hidden instead of advertising nothing. The kind breakdown lives in the
- * sidebar and memory_stats — the footer stays one compact fact. */
+ * sidebar and memory_stats — the footer stays one compact fact. The host
+ * already labels the slot "Memory", so the line carries no prefix. */
 export function formatMemoryLine(s: MemorySnapshot): string | null {
   if (s.total === 0) {
     return null;
@@ -38,7 +39,7 @@ export function formatMemoryLine(s: MemorySnapshot): string | null {
     s.store_bytes >= 1_048_576
       ? `${(s.store_bytes / 1_048_576).toFixed(1)} MB`
       : `${Math.max(1, Math.round(s.store_bytes / 1024))} kB`;
-  return `memory: ▤${s.total} · ${size}`;
+  return `${s.total}▤ · ${size}`;
 }
 
 /** Dialog lines: the header (entries + size) then one line per kind. */
@@ -188,7 +189,7 @@ export function formatMemorySidebarExpanded(
  * Collapsed sidebar (unchanged two-line shape) plus the no-store fallback.
  * Line 0 is the clickable header, the rest are muted count lines.
  */
-/** One collapsed sidebar line: "▶ Memory ▤699 · 3.0 MB" (+ " ● N hot" when hot).
+/** One collapsed sidebar line: "▶ Memory 699▤ · 3.0 MB" (+ " · ● N hot" when hot).
  * "Memory (no store)" for an empty store, so the slot stays hidden instead of
  * advertising nothing. */
 export function formatMemorySidebarCollapsed(s: MemorySidebarSnapshot): string[] {
@@ -199,8 +200,8 @@ export function formatMemorySidebarCollapsed(s: MemorySidebarSnapshot): string[]
     s.store_bytes >= 1_048_576
       ? `${(s.store_bytes / 1_048_576).toFixed(1)} MB`
       : `${Math.max(1, Math.round(s.store_bytes / 1024))} kB`;
-  const hot = s.hot > 0 ? ` ● ${s.hot} hot` : "";
-  return [`▶ Memory ▤${s.live} · ${size}${hot}`];
+  const hot = s.hot > 0 ? ` · ● ${s.hot} hot` : "";
+  return [`▶ Memory ${s.live}▤ · ${size}${hot}`];
 }
 
 export const MemoryRpc = Rpc.define({
@@ -236,6 +237,7 @@ export const MemoryRpc = Rpc.define({
         type: "object",
         properties: {
           store: { type: "boolean", description: "False when the store file does not exist yet" },
+          store_bytes: { type: "number", description: "Store file size on disk" },
           live: { type: "number", description: "Usable entries machine-wide" },
           trashed: { type: "number", description: "Rows in the trash" },
           kinds: {
@@ -271,6 +273,7 @@ export const MemoryRpc = Rpc.define({
         },
         required: [
           "store",
+          "store_bytes",
           "live",
           "trashed",
           "kinds",

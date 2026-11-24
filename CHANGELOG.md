@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.2] - 2026-11-24
+
+### Fixed
+
+- **The collapsed header showed "NaN kB".** `store_bytes` was built into the sidebar
+  snapshot but missing from the RPC wire schema: the host validated the payload and
+  stripped the unknown field, so the sidebar received `undefined` and rendered NaN.
+- Glyph placement: the store glyph follows the number — "▶ Memory 699▤ · 3.0 MB" and
+  " · ● N hot" as its own separator-separated segment (hot line omitted at 0); the
+  footer drops the redundant "memory:" prefix, the host already labels the slot.
+
 ## [0.21.1] - 2026-11-24
 
 ### Added
@@ -19,33 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resets the injected inventory; ordinary lessons keep the prefix byte-stable and
   reach live sessions through memory_search.
 - `docs/CONFIGURATION.md` caveman section.
-
-## [Unreleased]
-
-### Fixed
-
-- **Prompt cache defeated from the second request of every session.** The inventory was
-  injected on the first request only, but OpenCode rebuilds the system prompt on every
-  call (each tool-loop step included): from step 2 the block vanished, the prefix
-  changed and the whole context was re-prefilled (provider prompt cache and llama.cpp
-  slot cache alike), and the model lost the inventory. The inventory is now computed
-  once per session and repeated byte-identical on every request.
-- Overflowing the 512-session bookkeeping evicts the oldest session only, instead of
-  clearing every session and rebuilding all live prefixes at once.
-
-### Changed
-
-- Saving a lesson no longer resets the injection cache: that rebuilt the system prefix
-  of every live session. New lessons reach live sessions through `memory_search`, new
-  sessions through their own inventory.
-
-### Added
-
-- **Optional caveman integration** (`caveman` option, default `"auto"`): when
-  [caveman](https://github.com/JuliusBrussee/caveman) or one of its OpenCode ports is
-  detected, the system guidance and compaction prompt switch to terse variants and ask
-  for caveman-terse entries. Nothing mentions caveman when it is absent. Detection
-  signals: see docs/CONFIGURATION.md.
 
 ## [0.21.0] - 2026-11-24
 

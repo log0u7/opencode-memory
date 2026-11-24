@@ -10,6 +10,7 @@ import { sweepHousekeeping } from "../src/lib/housekeeping.js";
 import { buildSidebarSnapshot } from "../src/lib/tui-snapshot.js";
 import { HOT_THRESHOLD } from "../src/lib/store.js";
 import {
+  MemoryRpc,
   formatAgeHuman,
   formatMemorySidebarCollapsed,
   formatMemorySidebarExpanded,
@@ -183,6 +184,23 @@ function renderLine(line: SidebarSegment[] | undefined): string {
   return (line ?? []).map((seg) => seg.text).join("");
 }
 
+describe("sidebar wire schema", () => {
+  it("declares every field buildSidebarSnapshot returns, including store_bytes", () => {
+    // The host validates the output against the wire schema and strips unknown
+    // fields: store_bytes was built but undeclared, arrived as undefined and
+    // the collapsed header rendered "NaN kB" (seen live on 0.21.1).
+    const props = MemoryRpc.methods.sidebar.output.properties;
+    expect(props.store_bytes).toEqual({ type: "number", description: "Store file size on disk" });
+    expect(MemoryRpc.methods.sidebar.output.required).toContain("store_bytes");
+    const db = openMemoryDb(":memory:");
+    insert(db, { title: "n1" });
+    const snap = buildSidebarSnapshot(db, { scope: "/w", now: NOW });
+    for (const key of Object.keys(snap)) {
+      expect(props).toHaveProperty(key);
+    }
+  });
+});
+
 describe("formatMemorySidebarCollapsed", () => {
   const base = { ...noStoreSidebar(), store: true as const };
 
@@ -192,12 +210,12 @@ describe("formatMemorySidebarCollapsed", () => {
 
   it("renders the collapsed one-line shape with hot and store size", () => {
     const snap = { ...base, live: 10, stale: 3, shareable: 5, hot: 2, store_bytes: 3_145_728 };
-    expect(formatMemorySidebarCollapsed(snap)).toEqual(["▶ Memory ▤10 · 3.0 MB ● 2 hot"]);
+    expect(formatMemorySidebarCollapsed(snap)).toEqual(["▶ Memory 10▤ · 3.0 MB · ● 2 hot"]);
   });
 
   it("drops the hot marker when it is zero", () => {
     const snap = { ...base, live: 10, stale: 0, shareable: 5, hot: 0, store_bytes: 1_048_576 };
-    expect(formatMemorySidebarCollapsed(snap)).toEqual(["▶ Memory ▤10 · 1.0 MB"]);
+    expect(formatMemorySidebarCollapsed(snap)).toEqual(["▶ Memory 10▤ · 1.0 MB"]);
   });
 });
 
