@@ -122,7 +122,6 @@ export type SidebarTone = "entity" | "qualifier" | "value" | "alert";
 export type SidebarSegment = { text: string; tone: SidebarTone };
 
 /** Kinds packed per expanded line before the overflow spills onto a new one. */
-const KINDS_PER_LINE = 5;
 
 /**
  * Expanded sidebar (v4, quota-style): segment lines, tone per segment. Line 0
@@ -154,9 +153,12 @@ export function formatMemorySidebarExpanded(
     { text: " trashed", tone: "value" },
   ]);
   const kinds = s.kinds.filter((row) => row.count > 0);
-  for (let i = 0; i < kinds.length; i += KINDS_PER_LINE) {
+  // Two kinds per line, packed desc by count. No truncation on this section:
+  // 2 kinds fit the panel width, and a hard cut made the labels unreadable
+  // ("300 fa · 1 les") — seen live. The renderer wraps pathological cases.
+  for (let i = 0; i < kinds.length; i += 2) {
     const line: SidebarSegment[] = [{ text: "  ☰ ", tone: "qualifier" }];
-    kinds.slice(i, i + KINDS_PER_LINE).forEach((row, j) => {
+    kinds.slice(i, i + 2).forEach((row, j) => {
       if (j > 0) {
         line.push({ text: " · ", tone: "value" });
       }

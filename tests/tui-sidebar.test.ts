@@ -285,17 +285,17 @@ describe("formatMemorySidebarExpanded (v4)", () => {
     expect(renderLine(lines[2])).toBe("  ☰ 1 lesson");
   });
 
-  it("splits kinds into groups of five per line", () => {
+  it("packs kinds two per line, no truncation", () => {
     const kinds = ["lesson", "fact", "decision", "preference", "gotcha", "finding", "anchor"].map(
       (kind, i) => ({ kind, count: 10 - i }),
     );
     const snap = { ...base, live: 55, trashed: 0, kinds, hot: 0 };
     const lines = formatMemorySidebarExpanded(snap, NOW);
-    expect(lines).toHaveLength(4); // header + counts + two kind lines
-    expect(renderLine(lines[2])).toBe(
-      "  ☰ 10 lessons · 9 facts · 8 decisions · 7 preferences · 6 gotchas",
-    );
-    expect(renderLine(lines[3])).toBe("  ☰ 5 findings · 4 anchors");
+    expect(lines).toHaveLength(6); // header + counts + four kind lines (2 per line)
+    expect(renderLine(lines[2])).toBe("  ☰ 10 lessons · 9 facts");
+    expect(renderLine(lines[3])).toBe("  ☰ 8 decisions · 7 preferences");
+    expect(renderLine(lines[4])).toBe("  ☰ 6 gotchas · 5 findings");
+    expect(renderLine(lines[5])).toBe("  ☰ 4 anchors");
   });
 
   it("formats human sweep ages across unit boundaries", () => {

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.6] - 2026-11-24
+
+### Changed
+
+- Sidebar kinds pack **two per line** instead of five-per-line with hard truncation:
+  the panel width ate the labels ("300 fa · 1 les") — seen live. Each kind now
+  reads in full, packed desc by count; the renderer wraps pathological cases.
+  No truncation on this section.
+
 ## [0.20.5] - 2026-11-24
 
 ### Fixed
