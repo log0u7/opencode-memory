@@ -91,7 +91,7 @@ describe("token economy", () => {
     const entry = save(db, input({ title: "doomed note" }));
 
     expect(ops.get({ id: "00000000-0000-0000-0000-000000000000" })).toBe("no entry with that id");
-    forget(db, { id: entry.id });
+    forget(db, { scope: SCOPE, id: entry.id });
     expect(ops.get({ id: entry.id })).toBe(
       "entry is in the trash (restorable for 30 days): use memory_restore to put it back",
     );

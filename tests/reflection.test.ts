@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, type Mocked } from "vitest";
 
 import {
   createReflection,
@@ -16,9 +16,7 @@ const TRANSCRIPT = [
   "assistant: applied the same batch size to the cleanup query, no contention since.",
 ].join("\n");
 
-function deps(
-  overrides: Partial<ReflectionDeps> = {},
-): ReflectionDeps & Record<string, ReturnType<typeof vi.fn>> {
+function deps(overrides: Partial<Mocked<ReflectionDeps>> = {}): Mocked<ReflectionDeps> {
   return {
     isSubagent: vi.fn(async () => false),
     transcript: vi.fn(async () => TRANSCRIPT),

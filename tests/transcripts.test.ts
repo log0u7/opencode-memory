@@ -300,7 +300,7 @@ describe("renderTranscript", () => {
 
   it("marks non-record parts instead of crashing", () => {
     const out = renderTranscript(
-      [{ role: "user", content: [42, { type: "text", text: "ok" }] }],
+      [{ role: "user", content: [42 as never, { type: "text", text: "ok" }] }],
       meta,
     );
     expect(out).toContain("[unrendered part]");
