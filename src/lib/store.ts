@@ -74,6 +74,21 @@ export function canonicalScope(...candidates: Array<string | undefined>): string
   return first.trim().replace(/\/+$/, "") || FALLBACK_SCOPE;
 }
 
+/** Bound on the per-project scope value stored on an entry (the portable format
+ * shares the bound, so a row always round-trips). */
+export const PROJECT_MAX = 512;
+
+/** One canonical project value for one entry: trimmed, trailing slashes dropped,
+ * `undefined` when nothing usable remains — and undefined is the store's global
+ * marker (the entry injects in every project). */
+export function canonicalProject(value: string | undefined | null): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const trimmed = value.trim().replace(/\/+$/, "");
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 /** Field rules shared by saves and portable imports: bounds on title, body, kind, tags,
  * plus the shape of anchored paths and commit refs. Throws a TypeError naming the rule. */
 export function validateEntry(input: EntryInput): void {
@@ -115,6 +130,11 @@ export function validateEntry(input: EntryInput): void {
   }
   if (input.commit_sha !== undefined && !/^[0-9a-f]{7,64}$/i.test(input.commit_sha)) {
     throw new TypeError("commit_sha must be a git sha (7..64 hex)");
+  }
+  if (input.project !== undefined) {
+    if (input.project.length === 0 || input.project.length > PROJECT_MAX) {
+      throw new TypeError(`project must be 1..${PROJECT_MAX} characters`);
+    }
   }
   if (looksLikeSecret(input)) {
     throw new SecretDetectedError();
@@ -241,6 +261,7 @@ export function saveEntry(
 ): SaveResult {
   validateEntry(input);
   const scope = canonicalScope(input.scope);
+  const project = canonicalProject(input.project);
   const now = options.now ?? Date.now();
 
   // Expired rows are dead weight in search, so drop them with the save.
@@ -314,6 +335,7 @@ export function saveEntry(
       entry: {
         id: existing.id,
         scope,
+        ...(project !== undefined ? { project } : {}),
         kind: input.kind,
         title: input.title,
         body: input.body,
@@ -347,7 +369,7 @@ export function saveEntry(
       : parseStringArray(supersededEndorsedBy).filter((endorser) => endorser !== input.source);
   const endorsers = mergeEndorsement(peerEndorsers, input);
   db.conn.run(
-    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, content_hashes, supersedes, status, superseded_at, heat, endorsed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, content_hashes, supersedes, status, superseded_at, heat, endorsed_by, project) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       id,
       scope,
@@ -367,6 +389,7 @@ export function saveEntry(
       null,
       heat,
       endorsers.length > 0 ? JSON.stringify(endorsers) : null,
+      project ?? null,
     ],
   );
 
@@ -374,6 +397,7 @@ export function saveEntry(
     entry: {
       id,
       scope,
+      ...(project !== undefined ? { project } : {}),
       kind: input.kind,
       title: input.title,
       body: input.body,
@@ -512,16 +536,17 @@ export function suggestReplacements(
  */
 export function search(
   db: MemoryDb,
-  query: { query: string; scope: string; limit?: number; now?: number },
+  query: { query: string; scope: string; project?: string; limit?: number; now?: number },
 ): Entry[] {
   const scope = canonicalScope(query.scope);
+  const project = canonicalProject(query.project);
   const limit = clampLimit(query.limit, DEFAULT_LIMIT.search);
   const now = query.now ?? Date.now();
 
   const hits: Entry[] = [];
   const seen = new Set<string>();
   for (const match of searchCandidates(query.query)) {
-    for (const entry of ftsHits(db, match, scope, now, limit)) {
+    for (const entry of ftsHits(db, match, scope, project, now, limit)) {
       if (!seen.has(entry.id)) {
         seen.add(entry.id);
         hits.push(entry);
@@ -534,28 +559,53 @@ export function search(
   return hits.slice(0, limit);
 }
 
-function ftsHits(db: MemoryDb, match: string, scope: string, now: number, limit: number): Entry[] {
+function ftsHits(
+  db: MemoryDb,
+  match: string,
+  scope: string,
+  project: string | undefined,
+  now: number,
+  limit: number,
+): Entry[] {
+  // No project filter: a search crosses projects by default; the explicit filter
+  // keeps the global (unscoped) rows of the matching project too.
+  const projectFilter = project === undefined ? "" : "AND (e.project IS NULL OR e.project = ?) ";
+  const args =
+    project === undefined ? [match, scope, now, limit] : [match, scope, project, now, limit];
   return db.conn
     .all<Row>(
       `SELECT e.* FROM entries_fts JOIN entries e ON e.rowid = entries_fts.rowid
        WHERE entries_fts MATCH ? AND (e.scope = ? OR e.scope = 'global')
+         ${projectFilter}
          AND (e.expires_at IS NULL OR e.expires_at > ?) AND e.status = 'current' AND e.${LIVE}
        ORDER BY bm25(entries_fts) ASC, e.updated_at DESC
        LIMIT ?`,
-      [match, scope, now, limit],
+      args,
     )
     .map(rowToEntry);
 }
 
 export function list(
   db: MemoryDb,
-  query: { scope: string; limit?: number; now?: number; kind?: string; page?: number },
+  query: {
+    scope: string;
+    project?: string;
+    limit?: number;
+    now?: number;
+    kind?: string;
+    page?: number;
+  },
 ): Entry[] {
   const scope = canonicalScope(query.scope);
+  const project = canonicalProject(query.project);
   const limit = clampLimit(query.limit, DEFAULT_LIMIT.list);
   const now = query.now ?? Date.now();
   const kindFilter = query.kind === undefined ? "" : "AND kind = ? ";
   const kindArgs = query.kind === undefined ? [] : [query.kind];
+  // No project filter: list reads the whole directory scope; the injection passes
+  // one so a foreign project's rows stay out of the prompt.
+  const projectFilter = project === undefined ? "" : "AND (project IS NULL OR project = ?) ";
+  const head = project === undefined ? [scope, now] : [scope, project, now];
   // Pages are 1-based; a nonsensical page reads as the first one instead of a
   // negative OFFSET, which SQLite would reject.
   const page =
@@ -567,11 +617,12 @@ export function list(
   return db.conn
     .all<Row>(
       `SELECT * FROM entries
-       WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?) ${kindFilter}
+       WHERE (scope = ? OR scope = 'global') ${projectFilter}
+         AND (expires_at IS NULL OR expires_at > ?) ${kindFilter}
          AND status = 'current' AND ${LIVE}
        ORDER BY updated_at DESC, id ASC
        LIMIT ? OFFSET ?`,
-      [scope, now, ...kindArgs, limit, offset],
+      [...head, ...kindArgs, limit, offset],
     )
     .map(rowToEntry);
 }
@@ -858,6 +909,9 @@ function rowToEntry(row: Row): Entry {
       : {}),
     ...(row.heat !== null && row.heat !== undefined && row.heat > 0 ? { heat: row.heat } : {}),
     ...(endorsers.length > 0 ? { endorsed_by: endorsers } : {}),
+    ...(row.project !== null && row.project !== undefined && row.project !== ""
+      ? { project: row.project }
+      : {}),
   };
 }
 

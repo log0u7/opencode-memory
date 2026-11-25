@@ -177,11 +177,7 @@ export function importPortable(
         : undefined;
     // Peer entries land in `global` (see above); local exports keep their scope
     // verbatim, the 0.13.0 same-machine round-trip behavior.
-    insertImported(
-      db,
-      entry.origin_host === undefined ? entry : { ...entry, scope: "global" },
-      link,
-    );
+    insertImported(db, entry, link, { crossHost: entry.origin_host !== undefined });
     imported += 1;
   }
   return { imported, skipped: batch.length - imported };
@@ -236,6 +232,17 @@ function parseLine(line: string, lineNo: number, now: number): Entry {
   if (scope.length > SCOPE_MAX) {
     throw new Error(`line ${lineNo}: scope must be at most ${SCOPE_MAX} characters`);
   }
+  let project: string | undefined;
+  if (fields.project !== undefined) {
+    if (
+      typeof fields.project !== "string" ||
+      fields.project.length === 0 ||
+      fields.project.length > SCOPE_MAX
+    ) {
+      throw new Error(`line ${lineNo}: project must be a 1..${SCOPE_MAX} character string`);
+    }
+    project = fields.project;
+  }
   if (fields.source !== undefined && typeof fields.source === "string") {
     if (fields.source.length > SOURCE_MAX) {
       throw new Error(`line ${lineNo}: source must be at most ${SOURCE_MAX} characters`);
@@ -277,6 +284,7 @@ function parseLine(line: string, lineNo: number, now: number): Entry {
     expires_at,
     ...(typeof fields.source === "string" ? { source: fields.source } : {}),
     ...(fields.origin_host !== undefined ? { origin_host: fields.origin_host as string } : {}),
+    ...(project !== undefined ? { project } : {}),
     ...(fields.paths === undefined
       ? {}
       : { paths: expectStringArray(fields.paths, "paths", lineNo) }),
@@ -313,13 +321,22 @@ function entryExists(db: MemoryDb, id: string): boolean {
 }
 
 /** Plain insert, not saveEntry: the file already carries the id, timestamps and
- * lifecycle the store should keep verbatim. The entries_fts trigger indexes the row. */
-function insertImported(db: MemoryDb, entry: Entry, supersedes: string | undefined): void {
+ * lifecycle the store should keep verbatim. The entries_fts trigger indexes the row.
+ * A cross-host line (stamped with an origin_host) remaps both scope keys to the
+ * global markers: the peer's scope and project are paths that exist only on the
+ * machine that wrote the line. */
+function insertImported(
+  db: MemoryDb,
+  entry: Entry,
+  supersedes: string | undefined,
+  options: { crossHost?: boolean } = {},
+): void {
+  const crossHost = options.crossHost === true;
   db.conn.run(
-    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, supersedes, status, superseded_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, supersedes, status, superseded_at, deleted_at, project) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
     [
       entry.id,
-      entry.scope,
+      crossHost ? "global" : entry.scope,
       entry.kind,
       entry.title,
       entry.body,
@@ -333,6 +350,7 @@ function insertImported(db: MemoryDb, entry: Entry, supersedes: string | undefin
       supersedes ?? null,
       entry.status ?? "current",
       entry.superseded_at ?? null,
+      crossHost ? null : (entry.project ?? null),
     ],
   );
 }

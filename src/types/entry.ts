@@ -41,6 +41,11 @@ export type Entry = {
    * it with `shareable` at save time. One endorsement from an agent other than the
    * author makes the entry shareable. Unset while nobody vouched. */
   endorsed_by?: string[];
+  /** The project the entry belongs to: the injection filters by the session's
+   * project, so the entry is only injected there. Unset = global: the row is
+   * injected in every project (the backward-compatible default, and the shape of
+   * every row written before 0.23.0). */
+  project?: string | undefined;
   /** Provenance marker on exported lines only: the hostname of the machine the
    * export was written on. It labels cross-host knowledge in the JSONL format and
    * tells importPortable to trust-and-remap the entry to the `global` scope; the
@@ -65,6 +70,9 @@ export type EntryInput = {
   /** Publish without peer endorsement: the author vouches, and the save records the
    * author's own endorsement in `endorsed_by`. */
   shareable?: boolean;
+  /** The project the entry belongs to (absent/undefined = global, injected in
+   * every project). The plugin deduces it from the session's project. */
+  project?: string | undefined;
   /** Reserved: saveEntry manages the lifecycle itself. */
   status?: "current" | "superseded";
 };

@@ -13,6 +13,7 @@ import {
   TOOL_DESCRIPTIONS,
   createMemoryOps,
   memoryInventory,
+  projectFromScopeArg,
   stickyPerSession,
 } from "./lib/memory-ops.js";
 import { resolveCaveman } from "./lib/caveman.js";
@@ -32,7 +33,7 @@ import {
   parseRetrievalConfig,
   type PluginOptions,
 } from "./options.js";
-import { canonicalScope, stats as statsEntries } from "./lib/store.js";
+import { canonicalProject, canonicalScope, stats as statsEntries } from "./lib/store.js";
 import { MemoryRpc, noStoreSidebar, snapshotFromStats } from "./rpc.js";
 import {
   compactionSummary,
@@ -115,6 +116,10 @@ export const MemoryV2 = Plugin.define({
 
     // Request and compaction hooks carry no directory: the instance scope is the project.
     const projectScope = defaultScope(undefined, ctx.location.directory);
+    // The project the injected inventory filters by: the host's project context when
+    // it carries one, else the plugin directory. A context without a project (an
+    // older host) degrades to the directory, so the filter still holds one value.
+    const project = projectOf(ctx.location);
     const retrieval = parseRetrievalConfig(options);
 
     // Conservative automatic housekeeping: once at boot, then daily. A missing
@@ -266,7 +271,11 @@ export const MemoryV2 = Plugin.define({
             },
             title: { type: "string", description: "Short title (max 120 chars)" },
             body: { type: "string", description: "Entry content (max 8000 chars)" },
-            scope: { type: "string", description: "Scope key; defaults to the project directory" },
+            scope: {
+              type: "string",
+              description:
+                "Explicit project scope; defaults to the session's project. 'global' = injected in every project",
+            },
             tags: { type: "array", items: { type: "string" }, description: "Optional tags" },
             expires_at: { type: "number", description: "Optional epoch ms expiry" },
             paths: {
@@ -300,10 +309,13 @@ export const MemoryV2 = Plugin.define({
             supersedes?: string;
             shareable?: boolean;
           };
+          // The project scope: the explicit argument when given (the 'global'
+          // marker clears it), else the session's project.
+          const explicitProject = a.scope === undefined ? project : projectFromScopeArg(a.scope);
           return {
             content: ops.save(
-              { ...a },
-              defaultScope(undefined, a.scope ?? ctx.location.directory),
+              { ...a, project: explicitProject },
+              defaultScope(undefined, ctx.location.directory),
               context.agent,
               // The lib auto-captures HEAD when the save anchors paths.
               { directory: ctx.location.directory },
@@ -319,7 +331,10 @@ export const MemoryV2 = Plugin.define({
           type: "object",
           properties: {
             query: { type: "string", description: "Free-text query" },
-            scope: { type: "string", description: "Scope key; defaults to the project directory" },
+            scope: {
+              type: "string",
+              description: "Optional project filter; default searches across projects",
+            },
             limit: { type: "number", description: "Max results (default 5)" },
           },
           required: ["query"],
@@ -329,8 +344,12 @@ export const MemoryV2 = Plugin.define({
           const a = args as { query: string; scope?: string; limit?: number };
           return {
             content: ops.search(
-              { query: a.query, ...(a.limit !== undefined ? { limit: a.limit } : {}) },
-              defaultScope(undefined, a.scope ?? ctx.location.directory),
+              {
+                query: a.query,
+                ...(a.limit !== undefined ? { limit: a.limit } : {}),
+                ...(a.scope !== undefined ? { project: a.scope } : {}),
+              },
+              defaultScope(undefined, ctx.location.directory),
               // The lib marks stale anchoring per hit when it knows the checkout.
               { directory: ctx.location.directory },
             ),
@@ -839,7 +858,10 @@ export const MemoryV2 = Plugin.define({
         return;
       }
       const inventory = injected.inject(event.sessionID, () =>
-        memoryInventory(getDb, dbPath, projectScope, { directory: ctx.location.directory }),
+        memoryInventory(getDb, dbPath, projectScope, {
+          directory: ctx.location.directory,
+          project,
+        }),
       );
       if (inventory !== null) {
         event.system.push(textPart(inventory));
@@ -856,6 +878,7 @@ export const MemoryV2 = Plugin.define({
       }
       const inventory = memoryInventory(getDb, dbPath, projectScope, {
         directory: ctx.location.directory,
+        project,
       });
       if (inventory !== null) {
         event.system.push(textPart(inventory));
@@ -1009,7 +1032,7 @@ export const MemoryV2 = Plugin.define({
         return result.text;
       },
       saveLesson: (title, body) => {
-        ops.save({ kind: "lesson", title, body }, projectScope, "reflection");
+        ops.save({ kind: "lesson", title, body, project }, projectScope, "reflection");
       },
     });
     // The host keeps the event stream alive through this controller; aborting it stops
@@ -1049,4 +1072,16 @@ function modelRefV2(model?: string | undefined): { providerID: string; id: strin
   }
   const [providerID, id] = model.split("/", 2);
   return providerID && id ? { providerID, id } : undefined;
+}
+
+/** The project directory a session belongs to: the host's project context when it
+ * carries one, else the plugin directory. */
+function projectOf(location: {
+  directory: string;
+  project?: { directory?: string; canonical?: string };
+}): string {
+  return (
+    canonicalProject(location.project?.canonical ?? location.project?.directory) ??
+    canonicalScope(undefined, location.directory)
+  );
 }
