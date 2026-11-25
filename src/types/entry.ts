@@ -39,7 +39,10 @@ export type Entry = {
   heat?: number;
   /** Agents that vouched for the entry, author included when the author published
    * it with `shareable` at save time. One endorsement from an agent other than the
-   * author makes the entry shareable. Unset while nobody vouched. */
+   * author makes the entry shareable. Since 0.24.0 a tool endorsement is stamped in
+   * the rich `agent@<fingerprint>` form, binding the endorser to the node identity
+   * the mesh's TLS pairing proves; the plain legacy form stays valid locally and is
+   * never shareable cross-host. Unset while nobody vouched. */
   endorsed_by?: string[];
   /** The project the entry belongs to: the injection filters by the session's
    * project, so the entry is only injected there. Unset = global: the row is

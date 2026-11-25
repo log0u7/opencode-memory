@@ -91,7 +91,7 @@ export type MemoryOps = {
 
 export function createMemoryOps(
   getDb: () => MemoryDb,
-  options: { onLessonSaved?: () => void } = {},
+  options: { onLessonSaved?: () => void; fingerprint?: () => string | undefined } = {},
 ): MemoryOps {
   return {
     save: (args, scope, source, saveOptions = {}) =>
@@ -272,9 +272,14 @@ export function createMemoryOps(
         if (endorser === undefined || endorser.trim().length === 0) {
           return "error: endorser required (no agent in this context)";
         }
+        // The node identity stamp (0.24.0): wired by the plugin from the mesh's
+        // node.json, absent in tests and on machines without the mesh — the
+        // plain legacy form stays, valid locally, never shareable cross-host.
+        const fingerprint = options.fingerprint?.();
         const result = endorseEntry(getDb(), {
           id: resolveIdPrefix(getDb(), args.id) ?? args.id,
           endorser,
+          ...(fingerprint !== undefined ? { fingerprint } : {}),
         });
         if (result === null) {
           return "error: entry not found";

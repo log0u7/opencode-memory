@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync } from "node:fs";
 import { homedir, hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,6 +24,35 @@ export function defaultMeshInboxDir(): string {
 // a path at the filesystem root.
 function homeDir(): string {
   return process.env.HOME || homedir() || tmpdir();
+}
+
+/**
+ * The node fingerprint opencode-mesh derives from a node id: sha256, first 16 hex
+ * chars. Duplicated here by convention (the plugins share paths, never code): the
+ * fingerprint names a node's identity, the same identity the mesh's TLS pairing
+ * pins, so a node id proven by the transport resolves to the stamp an endorsement
+ * must carry to survive an import.
+ */
+export function fingerprintOfNodeId(nodeId: string): string {
+  return createHash("sha256").update(nodeId).digest("hex").slice(0, 16);
+}
+
+/**
+ * This node's own fingerprint, read from the mesh's node.json (the identity file
+ * the mesh writes at boot), or undefined when the mesh has never run here. It stamps
+ * every local endorsement so peers can verify them against this node's proven id.
+ */
+export function nodeFingerprint(): string | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(join(defaultMeshDataDir(), "node.json"), "utf8")) as {
+      node_id?: unknown;
+    };
+    return typeof raw?.node_id === "string" && raw.node_id.length > 0
+      ? fingerprintOfNodeId(raw.node_id)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export type SyncImportReport = {
@@ -75,7 +105,12 @@ export function syncImport(db: MemoryDb, options: { inboxDir: string }): SyncImp
       continue;
     }
     try {
-      const result = importPortable(db, path);
+      // The inbox file is named with the authenticated peer's node id (the mesh
+      // server writes it after the same authentication as /mail), so the sending
+      // node's fingerprint is derivable here and only endorsements carrying it
+      // survive the import — see importPortable's trust gate.
+      const originFingerprint = fingerprintOfNodeId(name.slice(0, -".jsonl".length));
+      const result = importPortable(db, path, { originFingerprint });
       report.imported += result.imported;
       report.skipped += result.skipped;
       renameSync(path, `${path}.imported`);

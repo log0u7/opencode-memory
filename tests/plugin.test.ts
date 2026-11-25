@@ -336,6 +336,22 @@ describe("memory plugin empty results", () => {
 
 describe("memory plugin housekeeping", () => {
   it("sweeps automatically at boot and again through memory_sweep", async () => {
+    // XDG_DATA_HOME points at the temp dir: a live mesh on this machine must not
+    // push real shareables into the boot sync pass mid-test (seen as a flake).
+    const previousXdg = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = dir;
+    try {
+      await bootSweepTest();
+    } finally {
+      if (previousXdg === undefined) {
+        delete process.env.XDG_DATA_HOME;
+      } else {
+        process.env.XDG_DATA_HOME = previousXdg;
+      }
+    }
+  });
+
+  async function bootSweepTest(): Promise<void> {
     const dbPath = join(dir, "sweep.db");
     const seed = openMemoryDb(dbPath);
     const stale = save(
@@ -364,7 +380,7 @@ describe("memory plugin housekeeping", () => {
     expect(await tools.memory_sweep?.execute({}, ctx())).toMatch(
       /^swept: 1 tombstoned \(dated\), 0 deleted \(duplicate\), 0 kept\n/,
     );
-  });
+  }
 
   it("sweeps on the daily interval and stops at dispose", async () => {
     vi.useFakeTimers();
