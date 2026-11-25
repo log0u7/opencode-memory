@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.25.0] - 2026-11-25
+
+### Performance
+
+- The inventory freshness check streams and stops at the budget: the hot lines
+  are probed first, the remaining lines fill the character budget in batches,
+  and an entry the budget cuts is never probed at all. Probing the whole
+  candidate list used to cost up to one synchronous git subprocess per anchored
+  entry inside the session hook, redone by every open session after a cache
+  reset.
+- One git hash-object per batch: the probed lot re-hashes all of its anchored
+  paths in a single subprocess per repository root instead of one per entry,
+  and a missing path is caught by stat first so one deleted file no longer
+  fails the whole batch.
+
+### Fixed
+
+- The truncated-fact pointer in the inventory is English: `… (memory_search)`.
+- The inventory lines drop the author stamp (`, by <agent>`); the date stays,
+  and the freed budget goes to content.
+- The anchored paths resolve from the git root at save and check time: a save
+  stores its paths relative to the repository root and stamps the root on the
+  entry (`repo_root`), so the same project opened from a sub-directory — or a
+  global entry viewed from another project — hashes the same bytes instead of
+  failing the check and disappearing from the inventory.
+
 ## [0.24.1] - 2026-11-25
 
 ### Fixed

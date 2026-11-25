@@ -59,6 +59,7 @@ const ADDED_COLUMNS = [
   "endorsed_by TEXT",
   "content_hashes TEXT",
   "project TEXT",
+  "repo_root TEXT",
 ];
 
 // SECURITY.md promises restrictive permissions whatever the user's umask is, so the

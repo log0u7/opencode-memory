@@ -24,6 +24,12 @@ export type Entry = {
    * whatever the commit or index state (works on dirty trees and untracked files).
    * Absent = the 0.11.0 commit-vs-worktree check. */
   content_hashes?: Record<string, string>;
+  /** The git repository root the anchored paths resolve from, captured at save.
+   * Paths are stored root-relative, so a later check from any sub-directory of
+   * the same repo — or a view of a global entry from another project — hashes
+   * the same bytes instead of failing on a path that does not exist there.
+   * Unset on rows written before 0.25.0 and on saves outside a repository. */
+  repo_root?: string;
   /** Id of the entry this one replaces. The replaced row stays as a superseded
    * tombstone, hidden from every read, restorable through memory_restore. */
   supersedes?: string;
@@ -68,6 +74,9 @@ export type EntryInput = {
   commit_sha?: string;
   /** Anchor stamp captured at save: git blob hash of each anchored path's content. */
   content_hashes?: Record<string, string>;
+  /** The git repository root the anchored paths resolve from (auto-captured at
+   * save; the paths are stored relative to it). */
+  repo_root?: string;
   /** The entry this one replaces (saveEntry validates and marks the old row). */
   supersedes?: string;
   /** Publish without peer endorsement: the author vouches, and the save records the

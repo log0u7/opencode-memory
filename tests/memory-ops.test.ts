@@ -82,12 +82,14 @@ describe("memory ops", () => {
     close();
   });
 
-  it("records who wrote an entry and names the writer in the inventory", async () => {
+  it("records who wrote an entry; the inventory line keeps the date only", async () => {
     const { ops, dbPath, getDb, close } = store();
     ops.save({ kind: "lesson", title: "check the schema first", body: "x" }, "/w", "reflection");
 
     expect(list(getDb(), { scope: "/w" })[0]?.source).toBe("reflection");
-    expect(await memoryInventory(getDb, dbPath, "/w")).toContain("by reflection");
+    // Since 0.25.0 the inventory line drops the author stamp (the date stays);
+    // the writer lives on the row and in memory_get's full view.
+    expect(await memoryInventory(getDb, dbPath, "/w")).not.toContain("by reflection");
     close();
   });
 
@@ -254,7 +256,7 @@ describe("memory inventory", () => {
 
     const inventory = (await memoryInventory(getDb, dbPath, "/w")) as string;
     expect(inventory).toContain(`${"x".repeat(260)}.`);
-    expect(inventory).toContain("… (body complet via memory_search)");
+    expect(inventory).toContain("… (memory_search)");
     expect(inventory).not.toContain("second sentence");
     // The store keeps the full body: only the injection is compressed.
     const hit = list(getDb(), { scope: "/w" }).find((entry) => entry.title === "long fact");
@@ -270,7 +272,7 @@ describe("memory inventory", () => {
     const inventory = (await memoryInventory(getDb, dbPath, "/w")) as string;
     // The lesson line carries the rule text whole: no truncation, no suffix.
     expect(inventory).toContain("[lesson] a rule (updated ");
-    expect(inventory).not.toContain("… (body complet via memory_search)");
+    expect(inventory).not.toContain("… (memory_search)");
     expect(inventory).not.toContain(long);
     // The store keeps the full body.
     const hit = list(getDb(), { scope: "/w" }).find((entry) => entry.title === "a rule");

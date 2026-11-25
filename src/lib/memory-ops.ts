@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
+import { relative, resolve } from "node:path";
 
 import { databaseSizeBytes, type MemoryDb } from "./db.js";
-import { contentHashes, currentCommitHash, isEntryFresh } from "./git.js";
+import { areEntriesFresh, contentHashes, currentCommitHash, gitRoot } from "./git.js";
 import { exportPortable, importPortable, resolvePortablePath } from "./portable.js";
 import {
   endorseEntry,
@@ -96,14 +97,19 @@ export function createMemoryOps(
   return {
     save: (args, scope, source, saveOptions = {}) =>
       run(() => {
-        // Auto-anchor: with anchored paths and no explicit commit, one git call
-        // captures the HEAD the entry was written against: the save is then
-        // fully anchored (paths + commit) and the cooling can apply. Outside a
-        // repository, or without paths, the entry keeps its previous shape.
-        const autoCommit =
-          args.paths !== undefined && args.paths.length > 0 && saveOptions.directory !== undefined
-            ? currentCommitHash(saveOptions.directory)
+        // Auto-anchor: with anchored paths and a session directory inside a
+        // repository, the save resolves everything against the repository
+        // ROOT: paths are stored root-relative and the root itself is stamped
+        // on the entry, so a later check from any sub-directory of the same
+        // repo (or of a global entry viewed from another project) hashes the
+        // same bytes. Outside a repository, or without paths, the entry keeps
+        // its previous shape.
+        const directory = saveOptions.directory;
+        const root =
+          args.paths !== undefined && args.paths.length > 0 && directory !== undefined
+            ? gitRoot(directory)
             : undefined;
+        const autoCommit = root !== undefined ? currentCommitHash(root) : undefined;
         const commit_sha = args.commit_sha ?? autoCommit;
         // Content stamp: the git blob hash of each anchored path at save time,
         // captured when the directory is a repository (the commit capture
@@ -112,12 +118,13 @@ export function createMemoryOps(
         // entry is fresh at creation and stale only when a file really changes.
         // A missing path (or a non-repository directory) leaves the entry on
         // the commit-only check, which already treats a missing path as stale.
+        const paths =
+          root !== undefined && args.paths !== undefined && directory !== undefined
+            ? args.paths.map((path) => relative(root, resolve(directory, path)))
+            : args.paths;
         const content_hashes =
-          autoCommit !== undefined &&
-          args.paths !== undefined &&
-          args.paths.length > 0 &&
-          saveOptions.directory !== undefined
-            ? contentHashes(saveOptions.directory, args.paths)
+          autoCommit !== undefined && root !== undefined && paths !== undefined
+            ? contentHashes(root, paths)
             : undefined;
         // An 8-char id prefix is accepted wherever a full id is; an unresolvable
         // prefix keeps its original text so the store names the mistake itself.
@@ -133,9 +140,10 @@ export function createMemoryOps(
           tags: args.tags ?? [],
           expires_at: args.expires_at ?? null,
           ...(source !== undefined ? { source } : {}),
-          ...(args.paths !== undefined ? { paths: args.paths } : {}),
+          ...(paths !== undefined ? { paths: paths } : {}),
           ...(commit_sha !== undefined ? { commit_sha: commit_sha } : {}),
           ...(content_hashes !== undefined ? { content_hashes: content_hashes } : {}),
+          ...(root !== undefined ? { repo_root: root } : {}),
           ...(supersedes !== undefined ? { supersedes: supersedes } : {}),
           ...(args.shareable !== undefined ? { shareable: args.shareable } : {}),
           ...(args.project !== undefined ? { project: args.project } : {}),
@@ -524,53 +532,77 @@ export function memoryInventory(
   const seen = new Set(lessons.map((entry) => entry.id));
   const ordered = [...lessons, ...others.filter((entry) => !seen.has(entry.id))];
 
-  // Anchored entries whose files changed since the save are stale: nothing
-  // observable contradicts an unanchored entry, so only those are filtered.
+  // Freshness runs au fil de l'eau: the hot lines are probed first (they inject
+  // outside the budget whatever their position), then the remaining lines
+  // stream under the budget in batches, and an entry the budget cuts is never
+  // probed at all — probing the whole candidate list used to cost up to one
+  // git subprocess per anchored entry inside a synchronous host hook, redone
+  // by every session after a cache reset.
   const directory = options.directory;
-  const fresh =
-    directory === undefined ? ordered : ordered.filter((entry) => isEntryFresh(entry, directory));
-  if (fresh.length === 0) {
-    return null;
-  }
-
-  const hot = fresh.filter((entry) => (entry.heat ?? 0) >= HOT_THRESHOLD);
-  const hotIds = new Set(hot.map((entry) => entry.id));
-  const rest = fresh.filter((entry) => !hotIds.has(entry.id));
+  const probe =
+    directory === undefined ? undefined : (entries: Entry[]) => areEntriesFresh(entries, directory);
 
   const lines = [INVENTORY_HEADER];
-  let size = INVENTORY_HEADER.length;
   const injected: string[] = [];
+  let size = INVENTORY_HEADER.length;
   // Hot lines pass before everything and do not count against the budget: only
   // their characters extend the ceiling the remaining lines are cut against.
   let hotChars = 0;
-  for (const entry of hot) {
+  const hotEntries = ordered.filter((entry) => (entry.heat ?? 0) >= HOT_THRESHOLD);
+  const hotVerdicts =
+    hotEntries.length === 0 ? [] : (probe?.(hotEntries) ?? hotEntries.map(() => true));
+  for (const [index, entry] of hotEntries.entries()) {
+    if (!hotVerdicts[index]) {
+      continue;
+    }
     const line = inventoryLine(entry, true);
     lines.push(line);
     injected.push(entry.id);
     size += line.length + 1;
     hotChars += line.length + 1;
   }
-  const ceiling = INVENTORY_MAX_CHARS + hotChars;
-  for (const entry of rest) {
-    const line = inventoryLine(entry, false);
-    if (size + line.length + 1 > ceiling) {
+
+  // The rest streams under the budget: one batch per round, probed with one
+  // hash-object per root, fresh lines emitted, the whole batch dropped (a
+  // stale entry frees its reserved room for the next round). Stops when
+  // nothing fits anymore, so cut entries never reach a probe.
+  const pool = ordered.filter((entry) => (entry.heat ?? 0) < HOT_THRESHOLD);
+  while (pool.length > 0) {
+    const batch: { entry: Entry; line: string }[] = [];
+    let batchChars = 0;
+    for (const entry of pool) {
+      const line = inventoryLine(entry, false);
+      if (size + batchChars + line.length + 1 > INVENTORY_MAX_CHARS + hotChars) {
+        break;
+      }
+      batch.push({ entry, line });
+      batchChars += line.length + 1;
+    }
+    if (batch.length === 0) {
       break;
     }
-    lines.push(line);
-    injected.push(entry.id);
-    size += line.length + 1;
+    const verdicts = probe?.(batch.map((item) => item.entry)) ?? batch.map(() => true);
+    for (const [index, item] of batch.entries()) {
+      if (!verdicts[index]) {
+        continue;
+      }
+      lines.push(item.line);
+      injected.push(item.entry.id);
+      size += item.line.length + 1;
+    }
+    pool.splice(0, batch.length);
   }
   // Only the lines that made it under the character budget were actually served to the
   // model, so only those count as used; the cut entries stay never-recalled candidates.
-  if (injected.length > 0) {
-    touchUsage(getDb(), injected, Date.now());
+  if (injected.length === 0) {
+    return null;
   }
+  touchUsage(getDb(), injected, Date.now());
   return lines.join("\n");
 }
 
 function inventoryLine(entry: Entry, hot: boolean): string {
-  const by = entry.source === undefined ? "" : `, by ${entry.source}`;
-  const base = `- [${entry.kind}]${hot ? "[HOT]" : ""} ${entry.title} (updated ${dayOf(entry.updated_at)}${by})`;
+  const base = `- [${entry.kind}]${hot ? "[HOT]" : ""} ${entry.title} (updated ${dayOf(entry.updated_at)})`;
   // Lesson lines stay title-only and verbatim (they are the active rules, and
   // their bodies live in the store); every other kind carries a bounded body
   // gist, so a long body cannot burn tokens on every turn.
@@ -597,7 +629,7 @@ function truncateFactBody(body: string): string {
     sentence.length <= FACT_BODY_INJECT_MAX
       ? sentence
       : sentence.slice(0, FACT_BODY_INJECT_MAX).trimEnd();
-  return `${head}… (body complet via memory_search)`;
+  return `${head}… (memory_search)`;
 }
 
 /** Newlines collapse to spaces: an inventory entry must stay one line. */

@@ -47,6 +47,7 @@ type Candidate = {
   paths: string | null;
   commit_sha: string | null;
   content_hashes: string | null;
+  repo_root: string | null;
   heat: number;
 };
 
@@ -115,6 +116,7 @@ export function sweepHousekeeping(
           commit_sha: candidate.commit_sha ?? undefined,
           paths: parsedPaths(candidate.paths),
           content_hashes: parsedHashes(candidate.content_hashes),
+          repo_root: candidate.repo_root ?? undefined,
         },
         options.directory,
       );
@@ -155,7 +157,7 @@ export function runHousekeepingPass(
 
 function candidates(db: MemoryDb, scope: string, now: number): Candidate[] {
   return db.conn.all<Candidate>(
-    `SELECT id, scope, kind, title, body, created_at, updated_at, paths, commit_sha, content_hashes, heat FROM entries
+    `SELECT id, scope, kind, title, body, created_at, updated_at, paths, commit_sha, content_hashes, repo_root, heat FROM entries
      WHERE (scope = ? OR scope = 'global') AND (expires_at IS NULL OR expires_at > ?) AND ${LIVE_CURRENT}
      ORDER BY created_at ASC, id ASC`,
     [scope, now],

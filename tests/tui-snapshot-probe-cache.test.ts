@@ -83,8 +83,10 @@ describe("tui-snapshot freshness cache", () => {
     }
     // Before the cache this burst cost 60 subprocesses (3 entries x 2 git calls
     // x 10 snapshots); the cache pays the first snapshot only: 11 identical
-    // snapshots cost 6 git subprocesses, 9 fewer than one snapshot used to.
-    expect(afterOne).toBe(6);
+    // snapshots cost 7 git subprocesses — 6 probes plus the one memoized
+    // rev-parse that resolves the legacy rows' anchor root — 9 fewer than one
+    // snapshot used to.
+    expect(afterOne).toBe(7);
     expect(probes.git).toBe(0);
   });
 
@@ -139,8 +141,9 @@ describe("tui-snapshot freshness cache", () => {
 
     probes.git = 0;
     expect(buildSidebarSnapshot(db, options).stale).toBe(0);
-    // Content mode costs one hash-object, not diff + ls-files.
-    expect(probes.git).toBe(1);
+    // Content mode costs one hash-object, not diff + ls-files, plus the one
+    // memoized rev-parse that resolves these legacy rows' anchor root.
+    expect(probes.git).toBe(2);
 
     probes.git = 0;
     const cached = freshCache.size();
@@ -178,12 +181,14 @@ describe("tui-snapshot freshness cache", () => {
 
   it("evicts the oldest verdicts past the 10_000 bound", () => {
     // Malformed shas fail the regex before any git call: 10_001 distinct keys
-    // fill the cache cheaply, one statSync per missing path, zero subprocesses.
+    // fill the cache cheaply, one statSync per missing path, and zero
+    // per-entry subprocesses (the single rev-parse resolves the probe root
+    // once, memoized).
     probes.git = 0;
     for (let i = 0; i < 10_001; i++) {
       freshCache.probe({ commit_sha: "not-a-sha", paths: [`missing-${i}.ts`] }, repo);
     }
-    expect(probes.git).toBe(0);
+    expect(probes.git).toBe(1);
     expect(freshCache.size()).toBe(10_000);
 
     freshCache.probe({ commit_sha: "not-a-sha", paths: ["one-more.ts"] }, repo);

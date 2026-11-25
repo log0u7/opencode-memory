@@ -2,7 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { databaseSizeBytes, getMeta, type MemoryDb } from "./db.js";
-import { isEntryFresh } from "./git.js";
+import { gitRoot, isEntryFresh, probeRoot, type FreshnessProbe } from "./git.js";
 import { HOT_THRESHOLD } from "./store.js";
 import type { MemorySidebarSnapshot } from "../rpc.js";
 
@@ -34,17 +34,12 @@ const FRESH_CACHE_MAX = 10_000;
 
 const freshVerdicts = new Map<string, boolean>();
 
-/** Cache key for one anchored entry: the anchor stamp plus what the probe would
- * observe of each path right now. `\0` separators keep lists unambiguous. */
-function freshKey(
-  commitSha: string,
-  paths: string[],
-  hashes: Record<string, string> | undefined,
-  directory: string,
-): string {
-  const root = resolve(directory);
-  const parts = [root, commitSha, JSON.stringify(hashes ?? {})];
-  for (const path of paths) {
+/** Cache key for one anchored entry: the root the probe resolves from, the
+ * anchor stamp (commit + content hashes) plus what the probe would observe of
+ * each path right now. `\0` separators keep lists unambiguous. */
+function freshKey(entry: FreshnessProbe, root: string): string {
+  const parts = [root, entry.commit_sha ?? "", JSON.stringify(entry.content_hashes ?? {})];
+  for (const path of entry.paths ?? []) {
     parts.push(path);
     try {
       const stat = statSync(resolve(root, path));
@@ -84,10 +79,16 @@ function cachedFreshness(
     commit_sha: string;
     paths: string[];
     content_hashes?: Record<string, string> | undefined;
+    repo_root?: string | undefined;
   },
   directory: string,
 ): boolean {
-  const key = freshKey(entry.commit_sha, entry.paths, entry.content_hashes, directory);
+  // The probe resolves the entry's paths from the same root isEntryFresh will,
+  // so the key's stat fingerprint observes the files the verdict actually
+  // depends on (a repo-root-stamped entry probed from another directory). The
+  // session root is resolved lazily: root-stamped entries pay no rev-parse.
+  const root = probeRoot(entry, () => gitRoot(directory) ?? resolve(directory));
+  const key = freshKey(entry, root);
   const hit = freshVerdicts.get(key);
   if (hit !== undefined) {
     // Refresh recency so eviction drops cold entries first.
@@ -188,8 +189,9 @@ export function buildSidebarSnapshot(
       paths: string;
       commit_sha: string;
       content_hashes: string | null;
+      repo_root: string | null;
     }>(
-      `SELECT paths, commit_sha, content_hashes FROM entries
+      `SELECT paths, commit_sha, content_hashes, repo_root FROM entries
        WHERE (scope = ? OR scope = 'global') AND paths IS NOT NULL AND paths != '[]'
          AND commit_sha IS NOT NULL AND ${CURRENT_LIVE}
        ORDER BY updated_at DESC LIMIT ?`,
@@ -214,6 +216,7 @@ export function buildSidebarSnapshot(
             commit_sha: row.commit_sha,
             paths,
             content_hashes: parseHashes(row.content_hashes),
+            repo_root: row.repo_root ?? undefined,
           },
           options.directory,
         )
