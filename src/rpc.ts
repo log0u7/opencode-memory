@@ -149,8 +149,8 @@ export function formatMemorySidebarExpanded(
   const lines: SidebarSegment[][] = [[{ text: "▼ Memory", tone: "entity" }]];
   if (s.hot > 0) {
     const line: SidebarSegment[] = [
-      { text: "  ● ", tone: "alert" },
-      { text: `${s.hot} hot`, tone: "qualifier" },
+      { text: "  ●  ", tone: "alert" },
+      { text: `${s.hot} ${plural("hot", s.hot)}`, tone: "qualifier" },
     ];
     if (s.last_sweep_ms !== null) {
       const age = formatAgeHuman(Math.max(0, now - s.last_sweep_ms));
@@ -204,12 +204,14 @@ export function formatMemorySidebarExpanded(
 }
 
 /**
- * Collapsed sidebar: the quota-style one-liner, built with the same segment
- * grammar as the expanded panel. The title carries the state toggle (`▶`
- * against the expanded `▼`) and is the only bold (entity) segment; the whole
- * line is the clickable header. Numbers read in qualifier, labels and the
- * separators in value. "Memory (no store)" for an empty store, so the slot
- * stays hidden instead of advertising nothing.
+ * Collapsed sidebar: the unified panel grammar (2026-11-25, shared with the
+ * mesh panel): `▶ <Entity> ·<n> <Label>[s] ·...` — compact separators (the
+ * space rides before the dot), capitalized labels with the count-appropriate
+ * plural, no glyphs in fold (the labels carry the signals; "Rec" never
+ * pluralizes — the abbreviation rule). The title carries the state toggle
+ * (`▶` against the expanded `▼`) and is the only bold (entity) segment; the
+ * whole line is the clickable header. "Memory (no store)" for an empty
+ * store, so the slot stays hidden instead of advertising nothing.
  */
 export function formatMemorySidebarCollapsed(s: MemorySidebarSnapshot): SidebarSegment[][] {
   if (!s.store) {
@@ -218,19 +220,18 @@ export function formatMemorySidebarCollapsed(s: MemorySidebarSnapshot): SidebarS
   const [sizeNum, sizeUnit] = storeSizeParts(s.store_bytes);
   const line: SidebarSegment[] = [
     { text: "▶ Memory", tone: "entity" },
-    { text: " · ", tone: "value" },
+    { text: " ·", tone: "value" },
     { text: `${s.live}`, tone: "qualifier" },
-    { text: s.live === 1 ? " Record" : " Records", tone: "value" },
-    { text: " · ", tone: "value" },
+    { text: " Rec", tone: "value" },
+    { text: " ·", tone: "value" },
     { text: sizeNum, tone: "qualifier" },
     { text: ` ${sizeUnit}`, tone: "value" },
   ];
   if (s.hot > 0) {
     line.push(
-      { text: " · ", tone: "value" },
-      { text: "● ", tone: "alert" },
+      { text: " ·", tone: "value" },
       { text: `${s.hot}`, tone: "qualifier" },
-      { text: " hot", tone: "value" },
+      { text: ` ${plural("Hot", s.hot)}`, tone: "value" },
     );
   }
   return [line];

@@ -210,41 +210,43 @@ describe("formatMemorySidebarCollapsed", () => {
     ]);
   });
 
-  it("renders the quota-style one-liner: ▶ Memory · N Records · size · ● N hot", () => {
-    const snap = { ...base, live: 699, stale: 3, shareable: 5, hot: 2, store_bytes: 3_145_728 };
+  it("renders the quota-style one-liner in the unified grammar: ▶ Memory ·N Rec ·size ·N Hots", () => {
+    const snap = { ...base, live: 729, stale: 3, shareable: 5, hot: 2, store_bytes: 3_454_368 };
     const [line] = formatMemorySidebarCollapsed(snap);
-    // Every separator carries its own spaces: nothing renders glued.
-    expect(renderLine(line)).toBe("▶ Memory · 699 Records · 3.0 MB · ● 2 hot");
+    // The unified panel grammar (2026-11-25): compact separators (" ·" — the
+    // space rides before the dot), the labels capitalized, no glyphs in fold
+    // (the labels carry the signals), "Rec" never pluralizes (the
+    // abbreviation rule), "Hot/Hots" follows the mode's title case.
+    expect(renderLine(line)).toBe("▶ Memory ·729 Rec ·3.3 MB ·2 Hots");
     expect(line).toEqual([
       { text: "▶ Memory", tone: "entity" },
-      { text: " · ", tone: "value" },
-      { text: "699", tone: "qualifier" },
-      { text: " Records", tone: "value" },
-      { text: " · ", tone: "value" },
-      { text: "3.0", tone: "qualifier" },
+      { text: " ·", tone: "value" },
+      { text: "729", tone: "qualifier" },
+      { text: " Rec", tone: "value" },
+      { text: " ·", tone: "value" },
+      { text: "3.3", tone: "qualifier" },
       { text: " MB", tone: "value" },
-      { text: " · ", tone: "value" },
-      { text: "● ", tone: "alert" },
+      { text: " ·", tone: "value" },
       { text: "2", tone: "qualifier" },
-      { text: " hot", tone: "value" },
+      { text: " Hots", tone: "value" },
     ]);
   });
 
-  it("singularizes Record for exactly one live entry", () => {
-    const snap = { ...base, live: 1, hot: 0, store_bytes: 1_048_576 };
+  it("singularizes Rec and Hot for exactly one entry", () => {
+    const snap = { ...base, live: 1, hot: 1, store_bytes: 1_048_576 };
     const [line] = formatMemorySidebarCollapsed(snap);
-    expect(renderLine(line)).toBe("▶ Memory · 1 Record · 1.0 MB");
+    expect(renderLine(line)).toBe("▶ Memory ·1 Rec ·1.0 MB ·1 Hot");
   });
 
-  it("drops the hot marker when it is zero", () => {
+  it("drops the hot segment when it is zero", () => {
     const snap = { ...base, live: 10, stale: 0, shareable: 5, hot: 0, store_bytes: 1_048_576 };
     expect(formatMemorySidebarCollapsed(snap)).toEqual([
       [
         { text: "▶ Memory", tone: "entity" },
-        { text: " · ", tone: "value" },
+        { text: " ·", tone: "value" },
         { text: "10", tone: "qualifier" },
-        { text: " Records", tone: "value" },
-        { text: " · ", tone: "value" },
+        { text: " Rec", tone: "value" },
+        { text: " ·", tone: "value" },
         { text: "1.0", tone: "qualifier" },
         { text: " MB", tone: "value" },
       ],
@@ -274,8 +276,8 @@ describe("formatMemorySidebarExpanded (v4)", () => {
     expect(formatMemorySidebarExpanded(snap, NOW)).toEqual([
       [{ text: "▼ Memory", tone: "entity" }],
       [
-        { text: "  ● ", tone: "alert" },
-        { text: "2 hot", tone: "qualifier" },
+        { text: "  ●  ", tone: "alert" },
+        { text: "2 hots", tone: "qualifier" },
         { text: " · sweep 2h ago", tone: "value" },
       ],
       [
@@ -330,7 +332,7 @@ describe("formatMemorySidebarExpanded (v4)", () => {
     const snap = { ...base, live: 1, hot: 1, last_sweep_ms: null };
     const lines = formatMemorySidebarExpanded(snap, NOW);
     expect(lines).toHaveLength(3);
-    expect(renderLine(lines[1])).toBe("  ● 1 hot");
+    expect(renderLine(lines[1])).toBe("  ●  1 hot");
   });
 
   it("pluralizes singular kind counts", () => {
