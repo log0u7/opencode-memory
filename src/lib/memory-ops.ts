@@ -45,8 +45,15 @@ export type SaveArgs = {
   /** Publish without peer endorsement: the author vouches, and the save records the
    * author's own endorsement in `endorsed_by`. */
   shareable?: boolean | undefined;
+  /** Explicit project scope override. When absent the CALLER deduces the entry's
+   * project from the session (and passes it here); `undefined` = global. */
+  project?: string | undefined;
 };
-export type SearchArgs = { query: string; limit?: number | undefined };
+export type SearchArgs = {
+  query: string;
+  project?: string | undefined;
+  limit?: number | undefined;
+};
 export type ListArgs = { limit?: number | undefined; page?: number | undefined };
 export type GetArgs = { id: string };
 export type ForgetArgs = { id?: string | undefined; query?: string | undefined };
@@ -131,6 +138,7 @@ export function createMemoryOps(
           ...(content_hashes !== undefined ? { content_hashes: content_hashes } : {}),
           ...(supersedes !== undefined ? { supersedes: supersedes } : {}),
           ...(args.shareable !== undefined ? { shareable: args.shareable } : {}),
+          ...(args.project !== undefined ? { project: args.project } : {}),
         });
         // Only a row that reached HOT re-injects: rebuilding the inventory changes
         // the system prefix and misses the prompt cache, so ordinary lessons reach
@@ -169,6 +177,7 @@ export function createMemoryOps(
         const hits = search(getDb(), {
           query: args.query,
           scope,
+          ...(args.project !== undefined ? { project: args.project } : {}),
           ...(args.limit !== undefined ? { limit: args.limit } : {}),
         });
         // Entries served to the model count as used: this is what keeps them off the
@@ -405,11 +414,20 @@ export const FACT_BODY_INJECT_MAX = 280;
 
 const INVENTORY_HEADER = "Memory already stored for this project (lessons first, then newest):";
 
+/** The project value a save stores from the tool's explicit `scope` argument:
+ * 'global' means the machine-wide marker (no project, injected everywhere). */
+export function projectFromScopeArg(scope: string | undefined): string | undefined {
+  if (scope === undefined || scope.trim().toLowerCase() === "global") {
+    return undefined;
+  }
+  return scope;
+}
+
 /** Tool descriptions shared by both entry points so the two hosts cannot drift. */
 export const TOOL_DESCRIPTIONS = {
-  save: "Save a durable entry to shared working memory. Never store credentials. supersedes=<id> replaces a known entry (8-char id prefix accepted); else the result lists similar entries to replace.",
+  save: "Save a durable entry to shared working memory. Never store credentials. supersedes=<id> replaces a known entry (8-char id prefix accepted); else the result lists similar entries to replace. scope=<project> overrides the entry's project scope ('global' = injected in every project); without it the entry carries the session's project.",
   search:
-    "Search shared working memory machine-wide: this project's scope plus global. Entries matching every query token come first, then prefix matches fill the rest. One line per hit: <id8> <kind> <title> — <body preview>; pass the id8 (or full id) to memory_get.",
+    "Search shared working memory machine-wide: this project's scope plus global. Entries matching every query token come first, then prefix matches fill the rest. One line per hit: <id8> <kind> <title> — <body preview>; pass the id8 (or full id) to memory_get. The search crosses project scopes by default; scope=<project> limits hits to that project.",
   list: "List recent memory entries for a scope (default: this project), newest first. Same one-line-per-entry format as search, id8 first.",
   get: "Full entry by id (8-char prefix accepted; search results truncate to 500 chars; this returns the complete entry).",
   forget:
@@ -478,14 +496,22 @@ export function memoryInventory(
   getDb: () => MemoryDb,
   dbPath: string,
   scope: string,
-  options: { directory?: string } = {},
+  options: { directory?: string | undefined; project?: string | undefined } = {},
 ): string | null {
   if (!existsSync(dbPath)) {
     return null;
   }
 
-  const lessons = list(getDb(), { scope, limit: 50, kind: "lesson" });
-  const others = list(getDb(), { scope, limit: 50 });
+  // Per-project scoping: only global (unscoped) rows and rows of the session's
+  // project are candidates; the store-level filter keeps the cap honest.
+  const project = options.project;
+  const lessons = list(getDb(), {
+    scope,
+    limit: 50,
+    kind: "lesson",
+    ...(project !== undefined ? { project } : {}),
+  });
+  const others = list(getDb(), { scope, limit: 50, ...(project !== undefined ? { project } : {}) });
   if (lessons.length === 0 && others.length === 0) {
     return null;
   }

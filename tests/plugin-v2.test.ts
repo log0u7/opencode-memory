@@ -88,7 +88,10 @@ function fakeCtx(
   >();
 
   const ctx = {
-    location: { directory: "/home/u/project" },
+    location: {
+      directory: "/home/u/project",
+      project: { id: "p1", directory: "/home/u/project", canonical: "/home/u/project" },
+    },
     options: { dbPath, ...options },
     tool: {
       transform: async (fn: (editor: { add: (t: AddedTool & { id: string }) => void }) => void) =>
@@ -197,6 +200,64 @@ describe("v1 and v2 share one behaviour", () => {
     expect(list(db, { scope: ctx.location.directory })[0]?.source).toBe("build");
     db.close();
     await cleanupV2?.();
+  });
+
+  it("memory_save deduces the project scope from the plugin location", async () => {
+    const dbPath = tmpDbPath();
+    const { ctx, added } = fakeCtx(dbPath);
+    const cleanup = await pluginModule.setup(ctx);
+    const save = added.find((t) => t.name === "memory_save");
+
+    // Without an explicit scope the entry carries the session's project.
+    await save?.execute({ kind: "fact", title: "deduced", body: "x" }, { sessionID: "s1" });
+    // An explicit scope overrides the project; "global" means machine-wide.
+    await save?.execute(
+      { kind: "fact", title: "explicit", body: "x", scope: "other-project" },
+      { sessionID: "s1" },
+    );
+    await save?.execute(
+      { kind: "fact", title: "worldwide", body: "x", scope: "global" },
+      { sessionID: "s1" },
+    );
+
+    const db = openMemoryDb(dbPath);
+    const rows = list(db, { scope: "/home/u/project" });
+    const byTitle = new Map(rows.map((row) => [row.title, row]));
+    expect(byTitle.get("deduced")?.project).toBe("/home/u/project");
+    expect(byTitle.get("explicit")?.project).toBe("other-project");
+    expect(byTitle.get("worldwide")?.project).toBeUndefined();
+    db.close();
+    await cleanup?.();
+  });
+
+  it("memory_search without a scope crosses projects; a scope filters the project", async () => {
+    const dbPath = tmpDbPath();
+    const { ctx, added } = fakeCtx(dbPath);
+    const cleanup = await pluginModule.setup(ctx);
+    const byName = new Map(added.map((t) => [t.name, t]));
+
+    const seed = openMemoryDb(dbPath);
+    save(seed, {
+      scope: "/home/u/project",
+      project: "another-project",
+      kind: "fact",
+      title: "foreign knowledge",
+      body: "about postgres",
+      tags: [],
+      expires_at: null,
+    });
+    seed.close();
+
+    const cross = await byName
+      .get("memory_search")
+      ?.execute({ query: "postgres" }, { sessionID: "s1" });
+    expect(cross?.content).toContain("foreign knowledge");
+
+    const filtered = await byName
+      .get("memory_search")
+      ?.execute({ query: "postgres", scope: "/home/u/project" }, { sessionID: "s1" });
+    expect(filtered?.content).toBe("no matching memory entries");
+    await cleanup?.();
   });
 });
 
@@ -352,16 +413,22 @@ describe("opencode-memory v2 setup", () => {
     const cleanup = await pluginModule.setup(ctx);
     const byName = new Map(added.map((t) => [t.name, t]));
 
+    // A row written by another session directory: a query delete must never cross it.
+    const seed = openMemoryDb(dbPath);
+    save(seed, {
+      scope: "/home/u/other",
+      kind: "fact",
+      title: "postgres sharding",
+      body: "uses postgres",
+      tags: [],
+      expires_at: null,
+    });
+    seed.close();
+
     await byName
       .get("memory_save")
       ?.execute(
         { kind: "fact", title: "postgres batching", body: "uses postgres" },
-        { sessionID: "s1" },
-      );
-    await byName
-      .get("memory_save")
-      ?.execute(
-        { kind: "fact", title: "postgres sharding", body: "uses postgres", scope: "/home/u/other" },
         { sessionID: "s1" },
       );
 

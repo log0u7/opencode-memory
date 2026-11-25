@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-11-25
+
+### Added
+
+- Per-project scoping. Entries carry a `project` (a new nullable column): the
+  injected inventory filters by the session's project, so a project's lessons no
+  longer leak into every other project's prompt. Rows without a project are
+  global and inject in every project - the backward-compatible default, and the
+  shape of every entry written before this release.
+- `memory_save` deduces the project from the session's project context; the
+  explicit `scope` argument overrides it (`global` stores the entry machine-wide).
+- `memory_search` still crosses project scopes by default; its `scope` argument
+  now filters by project when the agent wants one.
+- The mesh sync and the portable format carry the `project` field: an imported
+  entry keeps its origin project and stays uninjected while no local project
+  matches it; a cross-host import (origin-host stamped) lands global as before.
+
 ## [0.22.0] - 2026-11-25
 
 ### Added

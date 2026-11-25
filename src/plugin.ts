@@ -4,6 +4,7 @@ import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 
 import { openMemoryDb, type MemoryDb } from "./lib/db.js";
+import { canonicalProject } from "./lib/store.js";
 import {
   HOUSEKEEPING_INTERVAL_MS,
   runHousekeepingPass,
@@ -13,6 +14,7 @@ import {
   TOOL_DESCRIPTIONS,
   createMemoryOps,
   memoryInventory,
+  projectFromScopeArg,
   stickyPerSession,
 } from "./lib/memory-ops.js";
 import { resolveCaveman } from "./lib/caveman.js";
@@ -64,6 +66,7 @@ function reflectionDeps(
   config: ReflectionConfig,
   ops: ReturnType<typeof createMemoryOps>,
   projectScope: string,
+  project: string | undefined,
 ) {
   const model = modelRef(config.model);
   return {
@@ -102,7 +105,11 @@ function reflectionDeps(
       }
     },
     saveLesson: (title: string, body: string) => {
-      ops.save({ kind: "lesson", title, body }, projectScope, "reflection");
+      ops.save(
+        { kind: "lesson", title, body, ...(project !== undefined ? { project } : {}) },
+        projectScope,
+        "reflection",
+      );
     },
   };
 }
@@ -141,6 +148,9 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
   });
   // Request and compaction hooks carry no directory: the instance scope is the project.
   const projectScope = defaultScope(input.worktree, input.directory);
+  // The project the injected inventory filters by: the v1 instance has no host
+  // project context, so its scope stands in for the project.
+  const project = canonicalProject(input.worktree ?? input.directory);
   const reflection = parseReflectionConfig(options?.reflection);
   // Read once at boot so the guidance, part of the cached prefix, never flips mid-session.
   const caveman = resolveCaveman(options?.caveman, input.directory ?? input.worktree);
@@ -192,7 +202,9 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
           scope: tool.schema
             .string()
             .optional()
-            .describe("Scope key; defaults to this session's worktree"),
+            .describe(
+              "Explicit project scope; defaults to this session's project. 'global' = injected in every project",
+            ),
           tags: tool.schema.array(tool.schema.string()).optional().describe("Optional tags"),
           expires_at: tool.schema.number().optional().describe("Optional epoch ms expiry"),
           paths: tool.schema
@@ -214,8 +226,13 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
         },
         execute: async (args, context) =>
           ops.save(
-            { ...args },
-            defaultScope(args.scope ?? context.worktree ?? context.directory),
+            {
+              ...args,
+              // The project scope: the explicit argument when given (the 'global'
+              // marker clears it), else the session's project.
+              project: args.scope === undefined ? project : projectFromScopeArg(args.scope),
+            },
+            defaultScope(context.worktree ?? context.directory),
             context.agent,
             // The lib auto-captures HEAD when the save anchors paths.
             { directory: context.directory ?? context.worktree ?? process.cwd() },
@@ -229,13 +246,17 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
           scope: tool.schema
             .string()
             .optional()
-            .describe("Scope key; defaults to this session's worktree"),
+            .describe("Optional project filter; default searches across projects"),
           limit: tool.schema.number().optional().describe("Max results (default 5)"),
         },
         execute: async (args, context) =>
           ops.search(
-            { query: args.query, ...(args.limit !== undefined ? { limit: args.limit } : {}) },
-            defaultScope(args.scope ?? context.worktree ?? context.directory),
+            {
+              query: args.query,
+              ...(args.limit !== undefined ? { limit: args.limit } : {}),
+              ...(args.scope !== undefined ? { project: args.scope } : {}),
+            },
+            defaultScope(context.worktree ?? context.directory),
             // The lib marks stale anchoring per hit when it knows the checkout.
             { directory: context.directory ?? context.worktree ?? process.cwd() },
           ),
@@ -381,7 +402,7 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
   if (reflection) {
     const onIdle = createReflection(
       reflection,
-      reflectionDeps(input.client, reflection, ops, projectScope),
+      reflectionDeps(input.client, reflection, ops, projectScope, project),
     );
     hooks.event = async ({ event }) => {
       if (event.type === "session.idle") {
@@ -398,7 +419,7 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
         return;
       }
       const inventory = injected.inject(input.sessionID, () =>
-        memoryInventory(getDb, dbPath, projectScope, { directory: inventoryDir }),
+        memoryInventory(getDb, dbPath, projectScope, { directory: inventoryDir, project }),
       );
       if (inventory !== null) {
         output.system.push(inventory);
@@ -409,7 +430,10 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
       if (disposed) {
         return;
       }
-      const inventory = memoryInventory(getDb, dbPath, projectScope, { directory: inventoryDir });
+      const inventory = memoryInventory(getDb, dbPath, projectScope, {
+        directory: inventoryDir,
+        project,
+      });
       if (inventory !== null) {
         output.context.push(inventory);
       }

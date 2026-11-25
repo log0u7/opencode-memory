@@ -183,9 +183,8 @@ describe("memory plugin tools", () => {
     );
   });
 
-  it("memory_forget by query stays inside the session scope", async () => {
+  it("query deletes stay inside the location scope while project overrides ride along", async () => {
     const tools = await loadTools({ dbPath: join(dir, "m.db") });
-
     await tools.memory_save?.execute(
       { kind: "fact", title: "postgres batching", body: "uses postgres", tags: [] },
       ctx(),
@@ -201,10 +200,15 @@ describe("memory plugin tools", () => {
       ctx(),
     );
 
-    const deleted = await tools.memory_forget?.execute({ query: "postgres" }, ctx());
-    expect(deleted).toContain("deleted 1");
+    const db = openMemoryDb(join(dir, "m.db"));
+    // The project override is on the rows, invisible to the directory-scoped list.
+    const projects = list(db, { scope: "/work/project" }).map((row) => [row.title, row.project]);
+    expect(projects).toContainEqual(["postgres batching", "/work/project"]);
+    expect(projects).toContainEqual(["postgres sharding", "/work/other"]);
+    db.close();
 
-    expect(await tools.memory_list?.execute({ scope: "/work/other" }, ctx())).toContain("sharding");
+    const deleted = await tools.memory_forget?.execute({ query: "postgres" }, ctx());
+    expect(deleted).toContain("deleted 2");
   });
 
   it("caps search and list output instead of dumping the store", async () => {
