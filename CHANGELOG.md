@@ -5,7 +5,8 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.23.1] - 2026-11-25
+
+## [0.24.1] - 2026-11-25
 
 ### Fixed
 
@@ -13,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   panel): compact separators, Rec never pluralizes, Hot/Hots title-case,
   no glyphs in fold; the expanded hot bullet aligns with the other glyph
   rows and pluralizes lowercase hot/hots.
-
 ## [0.24.0] - 2026-11-25
 
 ### Security

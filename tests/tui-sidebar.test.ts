@@ -227,7 +227,8 @@ describe("formatMemorySidebarCollapsed", () => {
       { text: "3.3", tone: "qualifier" },
       { text: " MB", tone: "value" },
       { text: " ·", tone: "value" },
-      { text: "2 Hots", tone: "qualifier" },
+      { text: "2", tone: "qualifier" },
+      { text: " Hots", tone: "value" },
     ]);
   });
 

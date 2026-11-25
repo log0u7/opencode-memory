@@ -230,7 +230,8 @@ export function formatMemorySidebarCollapsed(s: MemorySidebarSnapshot): SidebarS
   if (s.hot > 0) {
     line.push(
       { text: " ·", tone: "value" },
-      { text: `${s.hot} ${plural("Hot", s.hot)}`, tone: "qualifier" },
+      { text: `${s.hot}`, tone: "qualifier" },
+      { text: ` ${plural("Hot", s.hot)}`, tone: "value" },
     );
   }
   return [line];
