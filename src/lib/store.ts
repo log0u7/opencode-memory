@@ -366,7 +366,9 @@ export function saveEntry(
   const peerEndorsers =
     supersededEndorsedBy === null
       ? []
-      : parseStringArray(supersededEndorsedBy).filter((endorser) => endorser !== input.source);
+      : parseStringArray(supersededEndorsedBy).filter(
+          (endorser) => endorserName(endorser) !== input.source,
+        );
   const endorsers = mergeEndorsement(peerEndorsers, input);
   db.conn.run(
     "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, content_hashes, supersedes, status, superseded_at, heat, endorsed_by, project) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -420,10 +422,21 @@ export function saveEntry(
 
 /** The entry's endorsers plus the author's own when the save publishes it. */
 function mergeEndorsement(endorsers: string[], input: EntryInput): string[] {
-  if (input.shareable !== true || input.source === undefined || endorsers.includes(input.source)) {
+  if (
+    input.shareable !== true ||
+    input.source === undefined ||
+    endorsers.some((endorser) => endorserName(endorser) === input.source)
+  ) {
     return endorsers;
   }
   return [...endorsers, input.source];
+}
+
+/** The agent an endorser stands for: the rich `agent@<fingerprint>` stamp (the node
+ * identity an endorsement binds to since 0.24.0) reduces to the agent name. */
+function endorserName(endorser: string): string {
+  const match = /^(.*)@([0-9a-f]{16})$/.exec(endorser);
+  return match?.[1] ?? endorser;
 }
 
 /**
@@ -431,10 +444,16 @@ function mergeEndorsement(endorsers: string[], input: EntryInput): string[] {
  * the endorsement is the share signal: any endorser other than the entry's author makes
  * it shareable. `null` when the id is not a live current row; `created` is false when
  * this endorser had already endorsed.
+ *
+ * When the caller wires the node's mesh fingerprint, the endorser is stamped in the
+ * rich `agent@<fingerprint>` form: the endorsement binds to the node identity, which
+ * the cross-host sync can verify against the transport-proven sending node. Without
+ * a fingerprint the plain legacy form is kept — valid locally, never shareable
+ * cross-host.
  */
 export function endorseEntry(
   db: MemoryDb,
-  target: { id: string; endorser: string },
+  target: { id: string; endorser: string; fingerprint?: string },
 ): { entry: Entry; created: boolean; shareable: boolean } | null {
   const row = db.conn.get<Row>(
     `SELECT * FROM entries WHERE id = ? AND status = 'current' AND ${LIVE}`,
@@ -443,10 +462,12 @@ export function endorseEntry(
   if (row === null) {
     return null;
   }
+  const stamped =
+    target.fingerprint === undefined ? target.endorser : `${target.endorser}@${target.fingerprint}`;
   const endorsers = parseStringArray(row.endorsed_by ?? "[]");
-  const created = !endorsers.includes(target.endorser);
+  const created = !endorsers.includes(stamped);
   if (created) {
-    endorsers.push(target.endorser);
+    endorsers.push(stamped);
     db.conn.run("UPDATE entries SET endorsed_by = ? WHERE id = ?", [
       JSON.stringify(endorsers),
       target.id,
@@ -457,9 +478,11 @@ export function endorseEntry(
 }
 
 /** An entry is worth sharing once someone other than its author vouched for it; the
- * author's own endorsement (the shareable-at-save marker) never qualifies alone. */
+ * author's own endorsement (the shareable-at-save marker) never qualifies alone. The
+ * agent is compared by name: a rich `agent@<fingerprint>` stamp of the author is still
+ * the author. */
 export function isShareable(entry: Entry): boolean {
-  return (entry.endorsed_by ?? []).some((endorser) => endorser !== entry.source);
+  return (entry.endorsed_by ?? []).some((endorser) => endorserName(endorser) !== entry.source);
 }
 
 /**

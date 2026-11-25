@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-11-25
+
+### Security
+
+- Endorsements bind to the node identity: a tool endorsement is stamped in the
+  rich `agent@fingerprint` form, where the fingerprint is the node's mesh
+  identity (sha256 of the node id in the mesh's `node.json`, the same identity
+  the TLS pairing pins). Agent names are self-declared, so a name alone proved
+  nothing; the stamp raises the bar to "a paired host".
+- The sync-import preserves shareable only when at least one endorsement
+  carries the origin host's fingerprint - the sending node is proven by the
+  transport (the mesh server names the inbox file with the authenticated
+  peer's node id), so an unverifiable endorsement makes the entry arrive
+  non-shareable: it stays imported, local, and re-endorsable.
+- Plain-name endorsements stay valid locally (the retro-compat path): no
+  local memory is retro-degraded, but a plain-name endorsement is never
+  shareable cross-host. Assumed residue: a compromised paired host can still
+  endorse - the same trust the TLS channel already carries.
+
 ## [0.23.0] - 2026-11-25
 
 ### Added

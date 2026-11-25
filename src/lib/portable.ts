@@ -50,6 +50,10 @@ export type ImportOptions = {
   rejectContent?: (body: string) => boolean;
   /** Stop once this many entries have been imported. */
   max?: number;
+  /** The sending node's fingerprint (derived from the mesh inbox file's node id,
+   * proven by the transport). A cross-host entry keeps its endorsements only when at
+   * least one carries this fingerprint; anything else arrives non-shareable. */
+  originFingerprint?: string;
 };
 
 /** Default portable file inside the project, versionable in git next to the code. */
@@ -177,7 +181,27 @@ export function importPortable(
         : undefined;
     // Peer entries land in `global` (see above); local exports keep their scope
     // verbatim, the 0.13.0 same-machine round-trip behavior.
-    insertImported(db, entry, link, { crossHost: entry.origin_host !== undefined });
+    const crossHost = entry.origin_host !== undefined;
+    // The endorsement trust gate (0.24.0): agent names are self-declared, so a
+    // cross-host endorsement survives only when it carries the fingerprint of the
+    // node the transport proved (the inbox file's authenticated sender). Without
+    // that stamp the endorsement is unverifiable: the entry arrives non-shareable
+    // and re-endorsable locally. Same-machine imports keep the file's endorsements
+    // verbatim: the round-trip and the retro-compat path.
+    let endorsed = entry.endorsed_by;
+    if (crossHost && endorsed !== undefined) {
+      const fingerprint = opts.originFingerprint;
+      const verified =
+        fingerprint !== undefined &&
+        endorsed.some((endorser) => endorser.endsWith(`@${fingerprint}`));
+      if (!verified) {
+        endorsed = undefined;
+      }
+    }
+    insertImported(db, entry, link, {
+      crossHost,
+      ...(endorsed !== undefined ? { endorsed } : {}),
+    });
     imported += 1;
   }
   return { imported, skipped: batch.length - imported };
@@ -283,6 +307,9 @@ function parseLine(line: string, lineNo: number, now: number): Entry {
     updated_at,
     expires_at,
     ...(typeof fields.source === "string" ? { source: fields.source } : {}),
+    ...(fields.endorsed_by === undefined
+      ? {}
+      : { endorsed_by: expectStringArray(fields.endorsed_by, "endorsed_by", lineNo) }),
     ...(fields.origin_host !== undefined ? { origin_host: fields.origin_host as string } : {}),
     ...(project !== undefined ? { project } : {}),
     ...(fields.paths === undefined
@@ -324,16 +351,18 @@ function entryExists(db: MemoryDb, id: string): boolean {
  * lifecycle the store should keep verbatim. The entries_fts trigger indexes the row.
  * A cross-host line (stamped with an origin_host) remaps both scope keys to the
  * global markers: the peer's scope and project are paths that exist only on the
- * machine that wrote the line. */
+ * machine that wrote the line. `endorsed` arrives already trust-gated by the caller
+ * (importPortable): verified endorsements persist, unverifiable ones stay out. */
 function insertImported(
   db: MemoryDb,
   entry: Entry,
   supersedes: string | undefined,
-  options: { crossHost?: boolean } = {},
+  options: { crossHost?: boolean; endorsed?: string[] } = {},
 ): void {
   const crossHost = options.crossHost === true;
+  const endorsed = options.endorsed;
   db.conn.run(
-    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, supersedes, status, superseded_at, deleted_at, project) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, supersedes, status, superseded_at, deleted_at, project, endorsed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
     [
       entry.id,
       crossHost ? "global" : entry.scope,
@@ -351,6 +380,7 @@ function insertImported(
       entry.status ?? "current",
       entry.superseded_at ?? null,
       crossHost ? null : (entry.project ?? null),
+      endorsed !== undefined && endorsed.length > 0 ? JSON.stringify(endorsed) : null,
     ],
   );
 }

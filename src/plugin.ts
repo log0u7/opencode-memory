@@ -18,6 +18,7 @@ import {
   stickyPerSession,
 } from "./lib/memory-ops.js";
 import { resolveCaveman } from "./lib/caveman.js";
+import { nodeFingerprint } from "./lib/sync.js";
 import {
   parseReflectionActivation,
   parseReflectionConfig,
@@ -145,6 +146,9 @@ export const MemoryPlugin: Plugin = async (input, options?: PluginOptions) => {
     // lessons keep the system prefix byte-stable (prompt-cache hits) and reach
     // live sessions through memory_search.
     onLessonSaved: () => injected.reset(),
+    // Endorsements bind to the node identity (0.24.0): the mesh's node.json is
+    // the same identity the TLS pairing pins, so peers can verify the stamp.
+    fingerprint: nodeFingerprint,
   });
   // Request and compaction hooks carry no directory: the instance scope is the project.
   const projectScope = defaultScope(input.worktree, input.directory);
