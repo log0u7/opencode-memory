@@ -236,14 +236,69 @@ describe("memory inventory", () => {
     close();
   });
 
-  it("lists titles, kinds and dates without bodies", async () => {
+  it("lists kinds, dates and the body next to the title", async () => {
     const { ops, dbPath, getDb, close } = store();
     ops.save({ kind: "decision", title: "Use WAL mode", body: "secret body" }, "/w");
 
     const inventory = await memoryInventory(getDb, dbPath, "/w");
     expect(inventory).toContain("[decision] Use WAL mode");
-    expect(inventory).not.toContain("secret body");
+    expect(inventory).toContain("secret body");
     expect(inventory).toMatch(/updated \d{4}-\d{2}-\d{2}/);
+    close();
+  });
+
+  it("truncates a long fact body at its first sentence with a search pointer", async () => {
+    const { ops, dbPath, getDb, close } = store();
+    const long = `${"x".repeat(260)}. second sentence that must not reach the block.`;
+    ops.save({ kind: "fact", title: "long fact", body: long }, "/w");
+
+    const inventory = (await memoryInventory(getDb, dbPath, "/w")) as string;
+    expect(inventory).toContain(`${"x".repeat(260)}.`);
+    expect(inventory).toContain("… (body complet via memory_search)");
+    expect(inventory).not.toContain("second sentence");
+    // The store keeps the full body: only the injection is compressed.
+    const hit = list(getDb(), { scope: "/w" }).find((entry) => entry.title === "long fact");
+    expect(hit?.body).toBe(long);
+    close();
+  });
+
+  it("a long lesson line is never truncated and its body stays out of the block", async () => {
+    const { ops, dbPath, getDb, close } = store();
+    const long = `${"rule ".repeat(200)}end of the rule.`;
+    ops.save({ kind: "lesson", title: "a rule", body: long }, "/w");
+
+    const inventory = (await memoryInventory(getDb, dbPath, "/w")) as string;
+    // The lesson line carries the rule text whole: no truncation, no suffix.
+    expect(inventory).toContain("[lesson] a rule (updated ");
+    expect(inventory).not.toContain("… (body complet via memory_search)");
+    expect(inventory).not.toContain(long);
+    // The store keeps the full body.
+    const hit = list(getDb(), { scope: "/w" }).find((entry) => entry.title === "a rule");
+    expect(hit?.body).toBe(long);
+    close();
+  });
+
+  it("the cap evicts the coldest facts first while every lesson stays", async () => {
+    const { ops, dbPath, getDb, close } = store();
+    ops.save({ kind: "lesson", title: "kept lesson one", body: "rule one" }, "/w");
+    for (let i = 0; i < 80; i += 1) {
+      ops.save(
+        {
+          kind: "fact",
+          title: `cold fact ${i}`,
+          body: `${"content ".repeat(45)}fact ${i} ends here. tail.`,
+        },
+        "/w",
+      );
+    }
+    ops.save({ kind: "lesson", title: "kept lesson two", body: "rule two" }, "/w");
+
+    const inventory = (await memoryInventory(getDb, dbPath, "/w")) as string;
+    expect(inventory).toContain("kept lesson one");
+    expect(inventory).toContain("kept lesson two");
+    // Newest facts stay; the coldest tail is cut.
+    expect(inventory).toContain("cold fact 79");
+    expect(inventory).not.toContain("cold fact 0 ");
     close();
   });
 

@@ -85,7 +85,7 @@ describe("usage tracking", () => {
     const dbPath = join(dir, "m.db");
     const db = openMemoryDb(dbPath);
     const entries = [];
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 60; i++) {
       entries.push(
         save(
           db,

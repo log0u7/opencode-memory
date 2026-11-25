@@ -5,19 +5,30 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-11-25
+
+### Added
+
+- The injection budget: the session inventory now carries each non-lesson entry's
+  body next to its title. A body over `FACT_BODY_INJECT_MAX` (280) characters
+  injects only its first sentence plus a
+  `… (body complet via memory_search)` pointer; the store keeps the full text
+  either way. Lesson lines stay verbatim, title-only, never truncated. The
+  budgeted block is hard-capped (`INVENTORY_MAX_CHARS`, 4000 characters) with
+  coldest-out eviction: hot lines ride outside the cap, the recency tail is cut
+  exactly as before.
+
+### Fixed
+
+- The test files are typechecked and conform (the guard found the drift; CI red
+  on main blocked every PR).
+
 ## [0.21.9] - 2026-11-25
 
 ### Removed
 
 - The "opencode-memory loaded" toast shown at every TUI boot (PO feedback:
   pure noise at each startup).
-
-## [Unreleased]
-
-### Fixed
-
-- The test files are typechecked and conform (the guard found the drift; CI red
-  on main blocked every PR).
 
 ## [0.21.8] - 2026-11-24
 
