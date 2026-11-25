@@ -124,7 +124,6 @@ export default Plugin.define({
   id: "@log0u7/opencode-memory.tui",
   setup(context: Context) {
     const theme = context.theme;
-    context.ui.toast.show({ message: "opencode-memory loaded", variant: "info", duration: 2000 });
 
     // Durable collapse state when the host allows it (scoped plugin ids hit a
     // host-side segment validation error — anomalyco/opencode#62634); RPC
