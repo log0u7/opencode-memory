@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { isAbsolute } from "node:path";
+import { isAbsolute, sep } from "node:path";
 
 import type { MemoryDb } from "./db.js";
 import { isEntryFresh } from "./git.js";
@@ -130,6 +130,14 @@ export function validateEntry(input: EntryInput): void {
   }
   if (input.commit_sha !== undefined && !/^[0-9a-f]{7,64}$/i.test(input.commit_sha)) {
     throw new TypeError("commit_sha must be a git sha (7..64 hex)");
+  }
+  if (input.repo_root !== undefined) {
+    if (input.repo_root.length === 0 || input.repo_root.length > 500) {
+      throw new TypeError("repo_root must be 1..500 characters");
+    }
+    if (input.repo_root.endsWith(sep) || input.repo_root.endsWith("/")) {
+      throw new TypeError("repo_root must not end with a path separator");
+    }
   }
   if (input.project !== undefined) {
     if (input.project.length === 0 || input.project.length > PROJECT_MAX) {
@@ -315,7 +323,7 @@ export function saveEntry(
     // (author or peers) are never dropped by a rewrite.
     const endorsers = mergeEndorsement(parseStringArray(existing.endorsed_by ?? "[]"), input);
     db.conn.run(
-      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ?, source = ?, paths = ?, commit_sha = ?, content_hashes = ?, heat = ?, endorsed_by = ? WHERE id = ?",
+      "UPDATE entries SET kind = ?, body = ?, tags = ?, updated_at = ?, expires_at = ?, source = ?, paths = ?, commit_sha = ?, content_hashes = ?, repo_root = ?, heat = ?, endorsed_by = ? WHERE id = ?",
       [
         input.kind,
         input.body,
@@ -326,6 +334,7 @@ export function saveEntry(
         JSON.stringify(input.paths ?? []),
         input.commit_sha ?? null,
         input.content_hashes === undefined ? null : JSON.stringify(input.content_hashes),
+        input.repo_root ?? null,
         heat,
         endorsers.length > 0 ? JSON.stringify(endorsers) : null,
         existing.id,
@@ -346,6 +355,8 @@ export function saveEntry(
         ...(input.source !== undefined ? { source: input.source } : {}),
         ...(input.paths !== undefined ? { paths: input.paths } : {}),
         ...(input.commit_sha !== undefined ? { commit_sha: input.commit_sha } : {}),
+        ...(input.content_hashes !== undefined ? { content_hashes: input.content_hashes } : {}),
+        ...(input.repo_root !== undefined ? { repo_root: input.repo_root } : {}),
         ...(endorsers.length > 0 ? { endorsed_by: endorsers } : {}),
         ...(heat > 0 ? { heat } : {}),
         status: "current",
@@ -371,7 +382,7 @@ export function saveEntry(
         );
   const endorsers = mergeEndorsement(peerEndorsers, input);
   db.conn.run(
-    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, content_hashes, supersedes, status, superseded_at, heat, endorsed_by, project) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at, source, paths, commit_sha, content_hashes, repo_root, supersedes, status, superseded_at, heat, endorsed_by, project) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       id,
       scope,
@@ -386,6 +397,7 @@ export function saveEntry(
       JSON.stringify(input.paths ?? []),
       input.commit_sha ?? null,
       input.content_hashes === undefined ? null : JSON.stringify(input.content_hashes),
+      input.repo_root ?? null,
       input.supersedes ?? null,
       "current",
       null,
@@ -410,6 +422,8 @@ export function saveEntry(
       ...(input.source !== undefined ? { source: input.source } : {}),
       ...(input.paths !== undefined ? { paths: input.paths } : {}),
       ...(input.commit_sha !== undefined ? { commit_sha: input.commit_sha } : {}),
+      ...(input.content_hashes !== undefined ? { content_hashes: input.content_hashes } : {}),
+      ...(input.repo_root !== undefined ? { repo_root: input.repo_root } : {}),
       ...(endorsers.length > 0 ? { endorsed_by: endorsers } : {}),
       ...(heat > 0 ? { heat } : {}),
       ...(input.supersedes !== undefined ? { supersedes: input.supersedes } : {}),
@@ -922,6 +936,9 @@ function rowToEntry(row: Row): Entry {
       : {}),
     ...(row.content_hashes !== null && row.content_hashes !== undefined
       ? { content_hashes: parseHashes(String(row.content_hashes)) }
+      : {}),
+    ...(row.repo_root !== null && row.repo_root !== undefined
+      ? { repo_root: String(row.repo_root) }
       : {}),
     ...(row.supersedes !== null && row.supersedes !== undefined
       ? { supersedes: row.supersedes }
