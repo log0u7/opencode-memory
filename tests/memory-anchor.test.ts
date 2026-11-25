@@ -196,7 +196,7 @@ describe("content anchoring", () => {
 
 describe("isEntryFresh", () => {
   it("treats unanchored entries as always fresh", async () => {
-    const entry = {
+    const entry: Entry = {
       id: "x",
       scope: repo,
       kind: "fact",

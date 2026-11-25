@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The test files are typechecked and conform (the guard found the drift; CI red
+  on main blocked every PR).
+
 ## [0.21.8] - 2026-11-24
 
 ### Added

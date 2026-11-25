@@ -304,7 +304,7 @@ describe("portable import", () => {
     writeFileSync(file, "not json\n");
     expect(() => importPortable(db, file)).toThrow(/^line 1: not valid JSON$/);
 
-    writeFileSync(file, `${["42", line()].join("\n")}\n`);
+    writeFileSync(file, `${["42", line({})].join("\n")}\n`);
     expect(() => importPortable(db, file)).toThrow(/^line 1: not an entry object$/);
 
     writeFileSync(file, `${line({ id: "" })}\n`);
