@@ -394,8 +394,14 @@ function formatBytes(bytes: number): string {
   return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb / 1024).toFixed(1)} MB`;
 }
 
-/** How much of the store is summarised into a prompt, worst case. */
-export const INVENTORY_MAX_CHARS = 1200;
+/** How much of the store is summarised into a prompt, worst case. Hot lines
+ * ride outside this budget: only their characters extend the ceiling the
+ * remaining lines are cut against. */
+export const INVENTORY_MAX_CHARS = 4000;
+
+/** A non-lesson body longer than this injects only its first sentence, plus a
+ * pointer to memory_search; the store keeps the full text either way. */
+export const FACT_BODY_INJECT_MAX = 280;
 
 const INVENTORY_HEADER = "Memory already stored for this project (lessons first, then newest):";
 
@@ -462,8 +468,10 @@ export function stickyPerSession() {
  * Bounded summary of recent entries, injected into the first request of a session and
  * into the compaction context. Hot entries (heat >= HOT_THRESHOLD, any kind) are
  * promoted above everything and injected outside the character budget: a recurring
- * lesson must reach the model even when the budget is saturated. Lessons follow, then
- * recency noise. `null` when there is nothing worth injecting, so a caller pushes
+ * lesson must reach the model even when the budget is saturated. Lessons follow
+ * (their lines stay verbatim, title-only), then recency noise, whose bodies are
+ * compressed: a long one injects only its first sentence with a pointer to
+ * memory_search. `null` when there is nothing worth injecting, so a caller pushes
  * nothing at all.
  */
 export function memoryInventory(
@@ -531,7 +539,39 @@ export function memoryInventory(
 
 function inventoryLine(entry: Entry, hot: boolean): string {
   const by = entry.source === undefined ? "" : `, by ${entry.source}`;
-  return `- [${entry.kind}]${hot ? "[HOT]" : ""} ${entry.title} (updated ${dayOf(entry.updated_at)}${by})`;
+  const base = `- [${entry.kind}]${hot ? "[HOT]" : ""} ${entry.title} (updated ${dayOf(entry.updated_at)}${by})`;
+  // Lesson lines stay title-only and verbatim (they are the active rules, and
+  // their bodies live in the store); every other kind carries a bounded body
+  // gist, so a long body cannot burn tokens on every turn.
+  if (entry.kind === "lesson") {
+    return base;
+  }
+  const body = flatten(entry.body);
+  if (body.length === 0) {
+    return base;
+  }
+  return `${base} — ${truncateFactBody(body)}`;
+}
+
+/** The injected half of a non-lesson body: the whole thing when it is short
+ * enough, else its first sentence (hard-cut inside the budget when even that
+ * sentence overruns) plus the pointer to the full text. */
+function truncateFactBody(body: string): string {
+  if (body.length <= FACT_BODY_INJECT_MAX) {
+    return body;
+  }
+  const dot = body.search(/[.!?](\s|$)/);
+  const sentence = dot === -1 ? body : body.slice(0, dot + 1);
+  const head =
+    sentence.length <= FACT_BODY_INJECT_MAX
+      ? sentence
+      : sentence.slice(0, FACT_BODY_INJECT_MAX).trimEnd();
+  return `${head}… (body complet via memory_search)`;
+}
+
+/** Newlines collapse to spaces: an inventory entry must stay one line. */
+function flatten(text: string): string {
+  return text.replaceAll(/\s+/g, " ").trim();
 }
 
 function dayOf(epochMs: number): string {

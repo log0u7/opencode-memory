@@ -49,8 +49,8 @@ function save(
 }
 
 function saturateBudget(): void {
-  // Saturate the 1200-char budget with newer facts (one per char-bucket).
-  for (let i = 0; i < 40; i += 1) {
+  // Saturate the 4000-char budget with newer facts (one per char-bucket).
+  for (let i = 0; i < 120; i += 1) {
     save("fact", `fact number ${i} with a reasonably long descriptive title`, { now: 2000 + i });
   }
 }
