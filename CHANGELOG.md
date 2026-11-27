@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- The `/memory` subcommands: `status` (the rich dialog: store, live, heat,
+  sweep, sync, kinds), `kinds`, `sync`, `trash`, `stats` (new `stats` RPC:
+  scopes machine-wide + the most recently updated entries), `continue
+  <sessionID>` and `cleanup [apply]` (new bridge RPCs: the retrieval-pointer
+  injection and the transcript retention sweep, dry run by default with a
+  confirm dialog on `apply`). Unknown subcommands answer a usage toast.
+
+### Changed
+
+- The expanded sidebar header carries the store size (`▼ Memory: 3.0 MB`, the
+  mesh `Mesh: <id>` pattern); the dedicated `⌗` size line is gone (the
+  duplicate).
+- The sweep age renders in the qualifier tone like the other counts
+  (`sweep 4m ago` was all muted).
+- The kind lines fit the panel width budget: a packed pair that overflows
+  drops to one kind per line, a label that still overflows truncates at the
+  last word boundary (never mid-word).
+- The status dialog header reads `Memory · shared working memory` (no em dash
+  in the UI strings).
+- `docs/conventions.md`: the convention blocks (todo discipline, session
+  protocol, mesh communication, release ritual, UI grammar) ready to paste
+  into an `AGENTS.md`, linked from the README.
+
+### Removed
+
+- The `/memory-continue` and `/memory-cleanup` transform commands: folded
+  under `/memory continue <sessionID>` and `/memory cleanup [apply]` (the
+  single `/memory <sub>` surface; the same server logic, reached over the new
+  bridge RPCs).
+
+
 ## [0.25.0] - 2026-11-25
 
 ### Performance

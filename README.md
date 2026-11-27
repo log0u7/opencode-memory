@@ -47,7 +47,7 @@ sequenceDiagram
 - **Memory that outlives sessions.** One SQLite store (WAL mode, FTS5 BM25 ranking) shared by every session on the machine, scoped per project worktree plus a `global` scope. Recent entries are injected into the prompt automatically.
 - **The agent writes its own memory.** The system prompt nudges it to save durable decisions, facts, preferences and gotchas as they emerge; distilled lessons (`kind=lesson`) are injected first in later sessions, so known mistakes are not retried.
 - **Lessons that heat up.** A lesson re-recorded (same angle revisited) gains heat; hot lessons (heat >= 2) are injected FIRST and exempt from the injection budget, so a recurring mistake is seen before it repeats. Lesson lines are never truncated or compressed. Anchored lessons self-stale when the code moves and cool down at sweep once the discipline lives in the code.
-- **Exact recall from past sessions.** `memory_session_search` greps exported transcripts for exact lines with context; `memory_session_read` reads a numbered window; `/memory-continue <sessionID>` brings a past session back into the current one.
+- **Exact recall from past sessions.** `memory_session_search` greps exported transcripts for exact lines with context; `memory_session_read` reads a numbered window; `/memory continue <sessionID>` brings a past session back into the current one.
 - **Token economy.** Search results serve 500-char previews with a real-length marker; `memory_get(id)` returns the complete entry on demand: the 20k-token search wall is gone.
 - **Self-reflection, inference-only.** The system prompt directs the running model itself to distill its errors into lessons (`memory_save` kind=lesson), no separate model call, no fine-tuning: the model is frozen, the memory learns. Configurable via `reflection: { enabled, ... }` (options in the Feedback loop section below); no daily cap: bursts are legitimate (fresh install, new model), and the store's own guards (title dedup + heat, supersede suggestions, sweep) carry the hygiene.
 - **Cross-host sync.** Paired [opencode-mesh](https://www.npmjs.com/package/@log0u7/opencode-mesh) hosts exchange endorsed entries automatically: `memory_endorse` (or `shareable: true` at save) marks an entry worth sharing, the housekeeping pass exports it to the mesh outbox, the mesh pushes it TLS-pinned every 15 min, and the peer imports it into its `global` scope. One agent's lesson becomes the fleet's lesson.
@@ -113,7 +113,21 @@ memory_stats()
 
 ### TUI
 
-The plugin ships a TUI part (auto-loaded by OpenCode): a toast on load, a `/memory` slash command, and a status slot in the home footer. Slash commands and the memory tools remain the primary interface.
+The plugin ships a TUI part (auto-loaded by OpenCode): a status slot in the home footer, a `Memory` sidebar panel, and the `/memory` command. Slash commands and the memory tools remain the primary interface.
+
+`/memory` reads an optional subcommand (0.26.0):
+
+| Command | View |
+|---|---|
+| `/memory` | The rich status: store size, live/trashed, heat, sweep, sync, kinds. |
+| `/memory kinds` | The kind breakdown with counts. |
+| `/memory sync` | Sync in/out and shareables (mesh side). |
+| `/memory trash` | Trash counter and the `memory_restore` window. |
+| `/memory stats` | Scopes machine-wide and the most recently updated entries. |
+| `/memory continue <sessionID>` | Continue a past session: export its transcript if needed and inject the retrieval pointer. |
+| `/memory cleanup [apply]` | Sweep exported transcripts per the retention policy (dry run by default; `apply` asks a confirm dialog, then deletes). |
+
+Unknown subcommands answer with a usage toast.
 
 Entry `kind` is free-form; conventions that work well: `decision`, `fact`, `preference`, `gotcha`, `lesson`, `compaction`.
 
@@ -207,9 +221,9 @@ If the export fails (disk full or permission error), compaction falls back to th
 
 `memory_session_search` accepts `all: true` to search every project's transcripts on the machine, not just the current scope's. A session whose transcript is not on disk yet is exported on demand (from the host's session store) the first time a tool names it: old sessions work without pre-exporting everything.
 
-The `/memory-continue <sessionID>` command brings a past session into the current one: it exports the transcript if needed and injects the retrieval pointer (path, last request, working rule) as a prompt.
+The `/memory continue <sessionID>` command brings a past session into the current one: it exports the transcript if needed and injects the retrieval pointer (path, last request, working rule) as a prompt.
 
-The `/memory-cleanup` command runs the retention sweep (dry run by default; pass `apply` to delete) and reports eligible files. Auto-sweep, when enabled, runs 30s after startup and after each compaction.
+The `/memory cleanup [apply]` command runs the retention sweep (dry run by default; `apply` asks a confirm dialog, then deletes) and reports eligible files. Auto-sweep, when enabled, runs 30s after startup and after each compaction.
 
 Measured on a live ~40k-token session with GLM-5.3-Flash (openrouter): the model-written summary cost 39,620 input tokens and $0.0018; the retrieval pointer compaction completed with no model call at all. The agent then recovered an exact value planted in the compacted session from a fresh session via `memory_session_search`. Live measurement on the local 30k-context model was not possible: a fresh session already overflows its window before any history exists, so compaction cannot run on it (model limitation, unrelated to this feature).
 
@@ -218,7 +232,7 @@ Measured on a live ~40k-token session with GLM-5.3-Flash (openrouter): the model
 - **Why a file, not SQLite.** The session record already lives in OpenCode's own SQLite database; the plugin must not duplicate it there, and OpenCode's DB is internal (no stable external schema). What the agent needs is not storage but a greppable projection: line-numbered plain text that `memory_session_search` and `memory_session_read` address with `path:line`, one append-only file per session (no write contention), readable with `less`/`diff` by humans. The plugin's own SQLite keeps only a lightweight index (one row per transcript); a second full-text copy of every transcript body in the store would add megabytes per session for a search grep already answers in milliseconds at this scale.
 - **Why skip the summary model call.** The summary is the most expensive call of a session (full re-tokenization at once) and the lossiest step (exact errors, paths, numbers get paraphrased away). The pointer replaces it with a fixed ~120-token text: cheaper, cache-independent, lossless.
 - **Provider state trade-off.** A synthetic compaction result does not carry provider cache state, so the next request re-prefills a small prefix. Accepted: it is the same trade the retrieval approach makes everywhere, and the post-compaction context is small anyway.
-- **Why the pointer injects in place.** A server-side plugin command cannot switch the TUI to another session, so `/memory-continue` brings the old session's pointer into the current session instead of spawning a new one. `/fork` first if a separate session is wanted.
+- **Why the pointer injects in place.** A server-side plugin command cannot switch the TUI to another session, so `/memory continue` brings the old session's pointer into the current session instead of spawning a new one. `/fork` first if a separate session is wanted.
 
 ### Notes
 
@@ -237,27 +251,25 @@ Measured on a live ~40k-token session with GLM-5.3-Flash (openrouter): the model
 
 ## TUI panel
 
-The plugin renders a `Memory` panel in OpenCode's sidebar. Click the title to collapse or expand it. Expanded:
+The plugin renders a `Memory` panel in OpenCode's sidebar. Click the title to collapse or expand it. Expanded (0.26.0: the header carries the store size, the mesh `Mesh: <id>` pattern):
 
 ```text
-▼ Memory
+▼ Memory: 3.0 MB
   ● 2 hot · sweep 3h ago
   ▤  142 live · 7 trashed
   ≡  84 facts · 31 lessons
   ≡  12 decisions · 8 gotchas
   ≡  5 preferences · 2 tasks
-  ⌗  3.0 MB
   ⇄  sync in 2 · out 1
 ```
 
 | Line | Meaning |
 |---|---|
-| `▼ Memory` | The panel title, clickable: toggles the collapsed/expanded state. |
+| `▼ Memory: N MB` | The panel title, clickable: toggles the collapsed/expanded state. The store size rides the header (`N MB` from 1 MiB up, `N kB` below); omitted before the first write. |
 | `● N hot` | Hot lessons (`heat >= 2`): recidivism, injected in priority. Line omitted at 0. |
-| `sweep N ago` | Age of the last housekeeping pass (shown on the hot line, hidden with it). |
+| `sweep N ago` | Age of the last housekeeping pass; the age reads in the qualifier tone like the other counts. Shown on the hot line, hidden with it. |
 | `▤ N live · N trashed` | The store: current entries vs tombstoned ones (recoverable for 30 days). |
-| `≡ N facts · N lessons` | Breakdown by kind, two per line, biggest first; extra kinds continue on the next lines. |
-| `⌗ N MB` | The store file size on disk: `N MB` from 1 MiB up (one decimal), `N kB` below. Line omitted when the store reads 0. |
+| `≡ N facts · N lessons` | Breakdown by kind, two per line, biggest first. The lines fit the panel width: a packed pair that overflows drops to one kind per line, and a label that still overflows truncates at the last word boundary (never mid-word). |
 | `⇄ sync in N · out N` | Cross-host sync: `in` = inbox files to import, `out` = shareables to push to peers. Line omitted without opencode-mesh. |
 
 Collapsed, the panel reduces to one quota-style line (the hot count disappears at 0):
@@ -272,13 +284,13 @@ Every state and marker the panel can show, checked against `formatMemorySidebarE
 
 | Marker / state | Meaning |
 |---|---|
+| `▼ Memory: N MB` | The header carries the store size (`N MB` from 1 MiB up, `N kB` below), omitted before the first write. The `▼` is clickable against the collapsed `▶`. Numbers render in the qualifier tone, labels and separators in value. |
 | `● N hot` | Hot lessons (`heat >= 2`: the same lesson recorded again = one recurrence), injected in priority; cooling steps `heat - 1` per sweep while the anchoring stays fresh. Omitted at 0. |
 | collapsed `▶ Memory · N Records · N MB · ● N hot` | The store state plus the hot marker (omitted at 0); the size reads `N kB` below 1 MiB. The `▶` mirrors the expanded `▼` and the whole line is clickable. Numbers render in the qualifier tone, labels and separators in value. |
 | `▤ N live · N trashed` | The store: current entries vs tombstoned ones (recoverable for 30 days via `memory_restore`). |
-| `≡ N facts · N lessons · …` | The breakdown by kind (two per line, biggest first). |
-| `⌗ N MB` | The SQLite store size on disk (`N MB` from 1 MiB up, `N kB` below); line omitted at 0. |
+| `≡ N facts · N lessons · …` | The breakdown by kind (two per line, biggest first; the width budget splits and truncates overflowing lines at the word boundary). |
 | `⇄ sync in N · out N` | Cross-host sync: `in` = inbox files to import, `out` = shareables to push (line omitted without opencode-mesh). |
-| `sweep N ago` (on the hot line) | Age of the last housekeeping pass. |
+| `sweep N ago` (on the hot line) | Age of the last housekeeping pass, in the qualifier tone. |
 | `Memory (no store)` | The store does not exist yet. |
 | footer `N Records · N MB` (`1 Record · N kB`) | The legacy footer line: the same store, compact (count for the calling scope plus `global`) with the store size; numbers in qualifier, labels in value. |
 
@@ -294,7 +306,7 @@ pnpm verify      # biome + typecheck + vitest
 pnpm build:check # tsc build + pack dry-run
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, and [docs/conventions.md](docs/conventions.md) for the convention blocks (todo discipline, session protocol, release ritual) ready to paste into an `AGENTS.md`.
 
 ## License
 
