@@ -731,10 +731,11 @@ describe("opencode-memory v2 setup", () => {
     // The 2.4 synthetic path: the pointer attaches to the next run WITHOUT
     // starting a turn, and no user message is posed.
     const call = (ctx.session.synthetic as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
-      | { sessionID: string; text: string; resume: boolean }
+      | { sessionID: string; text: string; resume: boolean; description: string }
       | undefined;
     expect(call?.sessionID).toBe("ses_cur");
     expect(call?.resume).toBe(false);
+    expect(call?.description).toBe("memory: continue ses_old");
     expect(call?.text).toContain("ses_old.md");
     expect(call?.text).toContain("continued request");
     expect(call?.text).toContain("Never guess: retrieve.");

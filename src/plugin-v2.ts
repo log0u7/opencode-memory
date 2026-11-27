@@ -994,11 +994,17 @@ export const MemoryV2 = Plugin.define({
         // without posing as a user message (the 2.4 synthetic path); the plain
         // prompt is the pre-2.4 fallback.
         if (typeof ctx.session.synthetic === "function") {
-          await ctx.session.synthetic({ sessionID, text, resume: false });
+          await ctx.session.synthetic({
+            sessionID,
+            text,
+            resume: false,
+            // The transcript shows a short label instead of the whole pointer.
+            description: `memory: continue ${target.slice(0, 8)}`,
+          });
         } else {
           await ctx.session.prompt({ sessionID, text });
         }
-        return { ok: true, message: `pointer injected from ${path}` };
+        return { ok: true, message: `pointer attached to the next run (${path})` };
       },
       cleanup: async (input: unknown) => {
         const { sessionID, apply } = (input ?? {}) as { sessionID?: string; apply?: boolean };
