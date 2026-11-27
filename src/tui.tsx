@@ -448,6 +448,8 @@ export default Plugin.define({
         {
           id: "memory.status",
           title: "Memory",
+          description:
+            "Memory /memory shows the status. Subcommands: kinds, sync, trash, stats, continue <sessionID>, cleanup [apply]",
           group: "Memory",
           slash: { name: "memory", arguments: true },
           palette: true,
