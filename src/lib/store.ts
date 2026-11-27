@@ -762,6 +762,35 @@ export function stats(
   );
 }
 
+/** Live entries machine-wide per scope: the /memory stats view (0.26.0).
+ * Trashed and expired rows do not count (the same LIVE rule as stats()). */
+export function scopeBreakdown(
+  db: MemoryDb,
+  query: { now?: number },
+): Array<{ scope: string; count: number }> {
+  const now = query.now ?? Date.now();
+  return db.conn.all<{ scope: string; count: number }>(
+    `SELECT scope, COUNT(*) AS count FROM entries
+     WHERE (expires_at IS NULL OR expires_at > ?) AND ${LIVE}
+     GROUP BY scope ORDER BY count DESC, scope ASC`,
+    [now],
+  );
+}
+
+/** The most recently updated live entries, for the stats view's top list. */
+export function topEntries(
+  db: MemoryDb,
+  query: { limit?: number; now?: number },
+): Array<{ id: string; kind: string; title: string }> {
+  const now = query.now ?? Date.now();
+  return db.conn.all<{ id: string; kind: string; title: string }>(
+    `SELECT id, kind, title FROM entries
+     WHERE (expires_at IS NULL OR expires_at > ?) AND ${LIVE}
+     ORDER BY updated_at DESC, id ASC LIMIT ?`,
+    [now, query.limit ?? 3],
+  );
+}
+
 /** Creation date of the oldest live entry in one scope plus `global`, or null when the
  * scope is empty: the store grows without bound, so age is the signal that knowledge is
  * rotting rather than accumulating. */

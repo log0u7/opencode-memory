@@ -9,10 +9,10 @@ type Theme = Context["theme"];
 
 import {
   MemoryRpc,
-  formatMemoryDialog,
   formatMemoryLine,
   formatMemorySidebarCollapsed,
   formatMemorySidebarExpanded,
+  formatMemoryStatusDialog,
   type MemorySidebarSnapshot,
   type MemorySnapshot,
   type SidebarSegment,
@@ -47,16 +47,38 @@ function themedFooter(theme: Theme, label: () => SidebarSegment[] | null): JSX.E
   );
 }
 
-function dialogBody(theme: Theme, snapshot: MemorySnapshot): JSX.Element {
-  const lines = formatMemoryDialog(snapshot);
+function dialogBody(theme: Theme, snapshot: MemorySidebarSnapshot): JSX.Element {
+  const lines = formatMemoryStatusDialog(snapshot, Date.now());
+  return segmentDialog(theme, [
+    [{ text: "Memory · shared working memory", tone: "entity" }],
+    ...lines,
+  ]);
+}
+
+/** One tone-colored segment row per line (the dialog twin of sidebarBody). */
+function segmentDialog(theme: Theme, lines: SidebarSegment[][]): JSX.Element {
   return (
-    <box gap={1} paddingLeft={2} paddingRight={2} paddingBottom={1}>
-      <text fg={theme.text.base}>
-        <b>Memory — shared working memory</b>
-      </text>
-      <For each={lines.slice(1)}>{(line) => <text fg={theme.text.muted}>{line}</text>}</For>
+    <box gap={0} paddingLeft={2} paddingRight={2} paddingBottom={1}>
+      <For each={lines}>
+        {(line) => (
+          <box flexDirection="row" gap={0}>
+            <For each={line}>
+              {(seg) => (
+                <text fg={toneFg(theme, seg.tone)} wrapMode="none">
+                  {seg.tone === "entity" ? <b>{seg.text}</b> : seg.text}
+                </text>
+              )}
+            </For>
+          </box>
+        )}
+      </For>
     </box>
   );
+}
+
+/** A small focused dialog: one bold section title, then segment lines. */
+function sectionDialog(theme: Theme, title: string, lines: SidebarSegment[][]): JSX.Element {
+  return segmentDialog(theme, [[{ text: title, tone: "entity" }], ...lines]);
 }
 
 /** The theme's attention color for the hot glyph: warning or error when the
@@ -144,12 +166,13 @@ export default Plugin.define({
     // Live footer + sidebar: poll both server-side snapshots over RPC. On a v1
     // host (no RPC) or while the setup side is unreachable, both stay hidden.
     const [label, setLabel] = createSignal<SidebarSegment[] | null>(null);
-    const [dialogSnapshot, setDialogSnapshot] = createSignal<MemorySnapshot | null>(null);
+    // The asking session for /memory continue and cleanup: captured from the
+    // sidebar slot render (the slot is the only place the host passes it).
+    const [currentSession, setCurrentSession] = createSignal<string | null>(null);
     const memory = context.client.rpc(MemoryRpc);
     const refresh = async () => {
       try {
         const next = (await memory.snapshot({})) as MemorySnapshot;
-        setDialogSnapshot(next);
         setLabel(formatMemoryLine(next));
       } catch {
         // server unreachable or v1 host: hide the footer, keep the last dialog data
@@ -191,7 +214,10 @@ export default Plugin.define({
     // the same snapshot serves every tab.
     const unregisterSidebar = context.ui.slot({
       append: "sidebar.content",
-      render: () => {
+      render: (slot) => {
+        if (slot.sessionID && slot.sessionID !== currentSession()) {
+          setCurrentSession(slot.sessionID);
+        }
         const snap = snapshot();
         if (!snap) {
           return (
@@ -214,28 +240,217 @@ export default Plugin.define({
     });
 
     // Keymap layers are disposed with the plugin; no manual disposer here.
+    const MEMORY_USAGE =
+      "usage: /memory [status|kinds|sync|trash|stats|continue <sessionID>|cleanup [apply]]";
+    const toast = (message: string, variant: "info" | "warning" = "info") =>
+      context.ui.toast.show({ title: "Memory", message, variant });
+    const unreachable = () => toast("Server unreachable");
+    const showStatus = async () => {
+      await refresh();
+      const snap = snapshot();
+      if (!snap) {
+        unreachable();
+        return;
+      }
+      context.ui.dialog.show(() => dialogBody(theme, snap));
+      context.ui.dialog.set({ size: "medium" });
+    };
+    // Slice views: one focused section per subcommand, built from the sidebar
+    // snapshot already in hand (refreshed first, the data is cheap to refetch).
+    const freshSidebar = async (): Promise<MemorySidebarSnapshot | null> => {
+      await refresh();
+      return snapshot();
+    };
+    const kindsLines = (s: MemorySidebarSnapshot): SidebarSegment[][] => {
+      const kinds = s.kinds.filter((row) => row.count > 0);
+      if (kinds.length === 0) {
+        return [[{ text: "(no kinds)", tone: "value" }]];
+      }
+      const segs: SidebarSegment[] = [];
+      kinds.forEach((row, i) => {
+        if (i > 0) {
+          segs.push({ text: " · ", tone: "value" });
+        }
+        segs.push(
+          { text: `${row.count}`, tone: "qualifier" },
+          { text: ` ${row.kind}${row.count === 1 ? "" : "s"}`, tone: "value" },
+        );
+      });
+      return [segs];
+    };
+    const syncLines = (s: MemorySidebarSnapshot): SidebarSegment[][] => {
+      if (!s.mesh_installed) {
+        return [[{ text: "mesh not installed", tone: "value" }]];
+      }
+      return [
+        [
+          { text: "in ", tone: "value" },
+          { text: `${s.sync_incoming}`, tone: "qualifier" },
+          { text: " · out ", tone: "value" },
+          { text: `${s.shareable}`, tone: "qualifier" },
+          { text: " shareable", tone: "value" },
+        ],
+      ];
+    };
+    const trashLines = (s: MemorySidebarSnapshot): SidebarSegment[][] => [
+      [
+        { text: `${s.trashed}`, tone: "qualifier" },
+        { text: ` ${s.trashed === 1 ? "row" : "rows"} in the trash`, tone: "value" },
+      ],
+      [{ text: "recoverable 30 days via memory_restore", tone: "value" }],
+    ];
+    const textLines = (text: string): SidebarSegment[][] =>
+      text.split("\n").map((row) => [{ text: row, tone: "value" as const }] as SidebarSegment[]);
+    const showStats = async () => {
+      try {
+        const result = (await memory.stats({})) as {
+          total: number;
+          store_bytes: number;
+          scopes: Array<{ scope: string; count: number }>;
+          top: Array<{ id: string; kind: string; title: string }>;
+        };
+        const lines: SidebarSegment[][] = [];
+        if (result.scopes.length === 0) {
+          lines.push([{ text: "(empty store)", tone: "value" }]);
+        } else {
+          for (const row of result.scopes.slice(0, 6)) {
+            lines.push([
+              { text: row.scope, tone: "qualifier" },
+              { text: ` ${row.count}`, tone: "value" },
+            ]);
+          }
+          if (result.scopes.length > 6) {
+            lines.push([{ text: `+${result.scopes.length - 6} more scopes`, tone: "value" }]);
+          }
+        }
+        for (const entry of result.top) {
+          lines.push([
+            { text: `${entry.kind}`, tone: "qualifier" },
+            { text: ` ${entry.title.slice(0, 40)}`, tone: "value" },
+          ]);
+        }
+        context.ui.dialog.show(() => sectionDialog(theme, "Memory · stats", lines));
+        context.ui.dialog.set({ size: "medium" });
+      } catch {
+        unreachable();
+      }
+    };
+    const showContinue = async (target: string | undefined) => {
+      if (!target) {
+        toast("usage: /memory continue <sessionID>", "warning");
+        return;
+      }
+      const sessionID = currentSession();
+      if (!sessionID) {
+        toast("no open session to inject the pointer into", "warning");
+        return;
+      }
+      try {
+        const result = (await memory.continue({ sessionID, target })) as {
+          ok: boolean;
+          message: string;
+        };
+        toast(result.message, result.ok ? "info" : "warning");
+      } catch {
+        unreachable();
+      }
+    };
+    const showCleanup = async (apply: boolean) => {
+      const sessionID = currentSession();
+      const run = async () => {
+        try {
+          const result = (await memory.cleanup({
+            ...(sessionID ? { sessionID } : {}),
+            apply,
+          })) as { report: string };
+          context.ui.dialog.show(() =>
+            sectionDialog(
+              theme,
+              `Memory · cleanup${apply ? " (applied)" : " (dry run)"}`,
+              textLines(result.report),
+            ),
+          );
+          context.ui.dialog.set({ size: "medium" });
+          void refresh();
+        } catch {
+          unreachable();
+        }
+      };
+      if (!apply) {
+        await run();
+        return;
+      }
+      const confirmed = await context.ui.dialog.confirm({
+        title: "Memory",
+        message: "Delete the eligible transcripts? This is irreversible.",
+        label: { confirm: "Delete", cancel: "Cancel" },
+      });
+      if (confirmed) {
+        await run();
+      }
+    };
+    const dispatch = async (input: string | undefined) => {
+      const words = (input ?? "").trim().split(/\s+/).filter(Boolean);
+      const [cmd, arg] = words;
+      switch (cmd ?? "") {
+        case "":
+        case "status":
+          await showStatus();
+          return;
+        case "kinds": {
+          const snap = await freshSidebar();
+          if (!snap) {
+            unreachable();
+            return;
+          }
+          context.ui.dialog.show(() => sectionDialog(theme, "Memory · kinds", kindsLines(snap)));
+          context.ui.dialog.set({ size: "medium" });
+          return;
+        }
+        case "sync": {
+          const snap = await freshSidebar();
+          if (!snap) {
+            unreachable();
+            return;
+          }
+          context.ui.dialog.show(() => sectionDialog(theme, "Memory · sync", syncLines(snap)));
+          context.ui.dialog.set({ size: "medium" });
+          return;
+        }
+        case "trash": {
+          const snap = await freshSidebar();
+          if (!snap) {
+            unreachable();
+            return;
+          }
+          context.ui.dialog.show(() => sectionDialog(theme, "Memory · trash", trashLines(snap)));
+          context.ui.dialog.set({ size: "medium" });
+          return;
+        }
+        case "stats":
+          await showStats();
+          return;
+        case "continue":
+          await showContinue(arg);
+          return;
+        case "cleanup":
+          await showCleanup(arg === "apply" || arg === "run" || arg === "yes");
+          return;
+        default:
+          toast(MEMORY_USAGE, "warning");
+      }
+    };
     context.keymap.layer(() => ({
       mode: "global",
       commands: [
         {
           id: "memory.status",
-          title: "Memory status",
+          title: "Memory",
           group: "Memory",
-          slash: { name: "memory" },
+          slash: { name: "memory", arguments: true },
           palette: true,
-          run: async () => {
-            await refresh();
-            const current = dialogSnapshot();
-            if (!current) {
-              context.ui.toast.show({
-                title: "Memory",
-                message: "Server unreachable",
-                variant: "info",
-              });
-              return;
-            }
-            context.ui.dialog.show(() => dialogBody(theme, current));
-            context.ui.dialog.set({ size: "medium" });
+          run: async (input?: string) => {
+            await dispatch(input);
           },
         },
         {

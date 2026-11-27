@@ -257,7 +257,7 @@ describe("formatMemorySidebarCollapsed", () => {
 describe("formatMemorySidebarExpanded (v4)", () => {
   const base = { ...noStoreSidebar(), store: true as const };
 
-  it("renders header, hot+sweep, counts, kinds, size and sync lines with tone tiers", () => {
+  it("renders header with size, hot+sweep, counts, kinds and sync lines with tone tiers", () => {
     const snap = {
       ...base,
       live: 368,
@@ -273,12 +273,22 @@ describe("formatMemorySidebarExpanded (v4)", () => {
       sync_incoming: 0,
       shareable: 3,
     };
+    // (0.26.0) The header carries the store size (the mesh pattern `Mesh: <id>`),
+    // the dedicated ⌗ size line is gone (the duplicate), and the sweep age is a
+    // qualifier value like the other counts.
     expect(formatMemorySidebarExpanded(snap, NOW)).toEqual([
-      [{ text: "▼ Memory", tone: "entity" }],
+      [
+        { text: "▼ Memory", tone: "entity" },
+        { text: ": ", tone: "value" },
+        { text: "3.0", tone: "qualifier" },
+        { text: " MB", tone: "value" },
+      ],
       [
         { text: "  ●  ", tone: "alert" },
         { text: "2 hots", tone: "qualifier" },
-        { text: " · sweep 2h ago", tone: "value" },
+        { text: " · sweep ", tone: "value" },
+        { text: "2h", tone: "qualifier" },
+        { text: " ago", tone: "value" },
       ],
       [
         { text: "  ▤  ", tone: "qualifier" },
@@ -295,11 +305,6 @@ describe("formatMemorySidebarExpanded (v4)", () => {
         { text: " · ", tone: "value" },
         { text: "165", tone: "qualifier" },
         { text: " lessons", tone: "value" },
-      ],
-      [
-        { text: "  ⌗  ", tone: "qualifier" },
-        { text: "3.0", tone: "qualifier" },
-        { text: " MB", tone: "value" },
       ],
       [
         { text: "  ⇄  ", tone: "qualifier" },
@@ -354,18 +359,51 @@ describe("formatMemorySidebarExpanded (v4)", () => {
     expect(renderLine(lines[5])).toBe("  ≡  4 anchors");
   });
 
-  it("omits the size line when store_bytes is 0 or absent", () => {
+  it("omits the size suffix from the header when store_bytes is 0 or absent", () => {
     const snap = { ...base, live: 3, trashed: 0, kinds: [{ kind: "fact", count: 3 }] };
     const lines = formatMemorySidebarExpanded(snap, NOW);
     expect(lines).toHaveLength(3);
+    expect(renderLine(lines[0])).toBe("▼ Memory");
     expect(lines.some((line) => renderLine(line).includes("⌗"))).toBe(false);
   });
 
-  it("renders the size line after kinds, in kB below 1 MiB", () => {
+  it("carries the store size in the header, in kB below 1 MiB", () => {
     const snap = { ...base, live: 2, trashed: 0, kinds: [], store_bytes: 512 * 1024 };
     const lines = formatMemorySidebarExpanded(snap, NOW);
-    expect(lines).toHaveLength(3); // header + counts + size
-    expect(renderLine(lines[2])).toBe("  ⌗  512 kB");
+    expect(lines).toHaveLength(2); // header + counts
+    expect(renderLine(lines[0])).toBe("▼ Memory: 512 kB");
+  });
+
+  it("truncates a pathological kind label at the word boundary within the width budget", () => {
+    const snap = {
+      ...base,
+      live: 3,
+      trashed: 0,
+      hot: 0,
+      kinds: [{ kind: "orchestrator steering rules", count: 3 }],
+    };
+    const lines = formatMemorySidebarExpanded(snap, NOW, { width: 32 });
+    const rendered = renderLine(lines[2]);
+    expect(rendered.length).toBeLessThanOrEqual(32);
+    expect(rendered).toMatch(/…$/);
+    expect(rendered).not.toContain("steering rules ·");
+  });
+
+  it("drops to one kind per line when the packed line would overflow", () => {
+    const snap = {
+      ...base,
+      live: 6,
+      trashed: 0,
+      hot: 0,
+      kinds: [
+        { kind: "orchestrator steering rules", count: 3 },
+        { kind: "release ritual notes", count: 3 },
+      ],
+    };
+    const lines = formatMemorySidebarExpanded(snap, NOW, { width: 32 });
+    expect(lines).toHaveLength(4); // header + counts + two single-kind lines
+    expect(renderLine(lines[2]).length).toBeLessThanOrEqual(32);
+    expect(renderLine(lines[3]).length).toBeLessThanOrEqual(32);
   });
 
   it("formats human sweep ages across unit boundaries", () => {
