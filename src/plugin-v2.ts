@@ -33,7 +33,13 @@ import {
   parseRetrievalConfig,
   type PluginOptions,
 } from "./options.js";
-import { canonicalProject, canonicalScope, stats as statsEntries } from "./lib/store.js";
+import {
+  canonicalProject,
+  canonicalScope,
+  scopeBreakdown,
+  stats as statsEntries,
+  topEntries,
+} from "./lib/store.js";
 import { MemoryRpc, noStoreSidebar, snapshotFromStats } from "./rpc.js";
 import {
   compactionSummary,
@@ -207,59 +213,6 @@ export const MemoryV2 = Plugin.define({
     };
     const unexportable = (sessionID: string): string =>
       `no transcript for session ${sessionID}; it could not be exported (unknown session or empty history)`;
-
-    if (retrieval.enabled) {
-      await ctx.command.transform((editor) => {
-        editor.add({
-          name: "memory-continue",
-          description:
-            "Continue a past session in this one: export its transcript if needed and inject the retrieval pointer",
-          execute: async ({ sessionID, prompt, delivery }) => {
-            const target = prompt.text.trim();
-            if (target.length === 0) {
-              await ctx.session.prompt({
-                sessionID,
-                text: "Pass the session id to continue: /memory-continue <sessionID>. The session's transcript is exported on demand and the retrieval pointer lands here.",
-                delivery,
-              });
-              return;
-            }
-            const scope = await ensureTranscript(target);
-            let text: string;
-            if (scope === null) {
-              text = unexportable(target);
-            } else {
-              const path = transcriptFilePath(retrieval.dir, scope, target);
-              text = compactionSummary(path, transcriptExcerpt(path));
-            }
-            await ctx.session.prompt({ sessionID, text, delivery });
-          },
-        });
-        editor.add({
-          name: "memory-cleanup",
-          description:
-            "Sweep exported session transcripts per the retention policy (dry run by default): " +
-            "report eligible files, then remove when confirmed.",
-          execute: async ({ sessionID, prompt, delivery }) => {
-            const arg = prompt.text.trim().toLowerCase();
-            const dryRun = arg !== "apply" && arg !== "run" && arg !== "yes";
-            const result = sweepTranscripts(retrieval.dir, {
-              retentionDays: retrieval.retentionDays,
-              keepRecent: retrieval.keepRecent,
-              maxSessions: retrieval.maxSessions,
-              scope: projectScope,
-              protectedSessionID: sessionID,
-              dryRun,
-              now: Date.now(),
-            });
-            const text =
-              `${dryRun ? "dry run (pass 'apply' to delete)" : "applied"}\n` +
-              formatSweepResult(result, dryRun);
-            await ctx.session.prompt({ sessionID, text, delivery });
-          },
-        });
-      });
-    }
 
     await ctx.tool.transform((editor) => {
       editor.add({
@@ -1004,6 +957,76 @@ export const MemoryV2 = Plugin.define({
             : false;
         await sidebarPersist.save({ collapsed });
         return { collapsed };
+      },
+      stats: async () => {
+        if (disposed) {
+          return { total: 0, store_bytes: 0, scopes: [], top: [] };
+        }
+        const db = getDb();
+        const scopes = scopeBreakdown(db, { now: Date.now() });
+        return {
+          total: scopes.reduce((sum, row) => sum + row.count, 0),
+          store_bytes: databaseSizeBytes(db),
+          scopes,
+          top: topEntries(db, { limit: 3, now: Date.now() }),
+        };
+      },
+      continue: async (input: unknown) => {
+        const { sessionID, target } = (input ?? {}) as { sessionID?: string; target?: string };
+        if (disposed) {
+          return { ok: false, message: "the memory plugin is disposed: restart the session" };
+        }
+        if (!retrieval.enabled) {
+          return { ok: false, message: "retrieval is disabled: no transcript to continue" };
+        }
+        if (typeof target !== "string" || target.length === 0 || typeof sessionID !== "string") {
+          return { ok: false, message: "usage: /memory continue <sessionID>" };
+        }
+        const scope = await ensureTranscript(target);
+        if (scope === null) {
+          // The failure rides the toast (the TUI shows it): no prompt, no LLM
+          // turn for an error the operator already sees.
+          return { ok: false, message: unexportable(target) };
+        }
+        const path = transcriptFilePath(retrieval.dir, scope, target);
+        const text = compactionSummary(path, transcriptExcerpt(path));
+        // The pointer attaches to the NEXT run without starting a turn and
+        // without posing as a user message (the 2.4 synthetic path); the plain
+        // prompt is the pre-2.4 fallback.
+        if (typeof ctx.session.synthetic === "function") {
+          await ctx.session.synthetic({
+            sessionID,
+            text,
+            resume: false,
+            // The transcript shows a short label instead of the whole pointer.
+            description: `memory: continue ${target.slice(0, 8)}`,
+          });
+        } else {
+          await ctx.session.prompt({ sessionID, text });
+        }
+        return { ok: true, message: `pointer attached to the next run (${path})` };
+      },
+      cleanup: async (input: unknown) => {
+        const { sessionID, apply } = (input ?? {}) as { sessionID?: string; apply?: boolean };
+        if (!retrieval.enabled) {
+          return { report: "retrieval is disabled: nothing to sweep" };
+        }
+        const dryRun = apply !== true;
+        const result = sweepTranscripts(retrieval.dir, {
+          retentionDays: retrieval.retentionDays,
+          keepRecent: retrieval.keepRecent,
+          maxSessions: retrieval.maxSessions,
+          scope: projectScope,
+          ...(typeof sessionID === "string" ? { protectedSessionID: sessionID } : {}),
+          dryRun,
+          now: Date.now(),
+        });
+        const report =
+          `${dryRun ? "dry run (pass 'apply' to delete)" : "applied"}\n` +
+          formatSweepResult(result, dryRun);
+        // The dialog shows the report: no prompt injection, no LLM turn for a
+        // text the operator already has on screen.
+        return { report };
       },
     });
 

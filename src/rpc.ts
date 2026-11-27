@@ -55,12 +55,6 @@ export function formatMemoryLine(s: MemorySnapshot): SidebarSegment[] | null {
   ];
 }
 
-/** Dialog lines: the header (entries + size) then one line per kind. */
-export function formatMemoryDialog(s: MemorySnapshot): string[] {
-  const [sizeNum, sizeUnit] = storeSizeParts(s.store_bytes);
-  return [`memory: ${s.total} entries · ${sizeNum} ${sizeUnit}`, ...s.all_kinds];
-}
-
 export type MemorySidebarSnapshot = {
   /** False when the store file does not exist yet: the sidebar falls back to a
    * single "Memory (no store)" line. */
@@ -137,16 +131,98 @@ export type SidebarSegment = { text: string; tone: SidebarTone };
 
 /** Kinds packed per expanded line before the overflow spills onto a new one. */
 
+/** Word-boundary truncation (the mesh panel's rule): cut at the last space
+ * that fits the budget, never mid-word; a single word longer than the whole
+ * budget has no boundary to cut at: hard cut. */
+function truncateAtWord(text: string, budget: number): string {
+  if (text.length <= budget) return text;
+  // The ellipsis rides INSIDE the budget: a hard cut at the full budget would
+  // render budget+1 chars and clip the marker itself. A single word longer
+  // than the budget has no boundary to cut at: hard cut (mid-word, marked).
+  const cut = text.slice(0, Math.max(0, budget - 1));
+  const space = cut.lastIndexOf(" ");
+  return (space > 0 ? cut.slice(0, space) : cut) + "…";
+}
+
+/** One kind row as segments: the count in qualifier, the label in value. */
+function kindSegments(row: { kind: string; count: number }): SidebarSegment[] {
+  return [
+    { text: `${row.count}`, tone: "qualifier" },
+    { text: ` ${plural(row.kind, row.count)}`, tone: "value" },
+  ];
+}
+
+const kindMark: SidebarSegment = { text: "  ≡  ", tone: "qualifier" };
+const kindSeparator: SidebarSegment = { text: " · ", tone: "value" };
+
+/** Rendered length of a segment line (the width budget applies to it). */
+function lineLength(line: SidebarSegment[]): number {
+  return line.reduce((sum, seg) => sum + seg.text.length, 0);
+}
+
+/** Kinds packed per expanded line before the overflow spills onto a new one.
+ * The panel must not overflow (0.26.0): a packed pair that exceeds the width
+ * budget drops to one kind per line, and a label that still overflows truncates
+ * at the last word boundary (the `300 fa · 1 les` incident stays dead). */
+function kindLines(
+  kinds: Array<{ kind: string; count: number }>,
+  width: number,
+): SidebarSegment[][] {
+  const pack = (rows: Array<{ kind: string; count: number }>): SidebarSegment[] => [
+    kindMark,
+    ...rows.flatMap((row, j) => {
+      const segs = kindSegments(row);
+      return j > 0 ? [kindSeparator, ...segs] : segs;
+    }),
+  ];
+  // Pass 1: pack pairs, split to singles when the pair overflows.
+  const chunks: Array<Array<{ kind: string; count: number }>> = [];
+  for (let i = 0; i < kinds.length; i += 2) {
+    const pair = kinds.slice(i, i + 2);
+    if (pair.length === 2 && lineLength(pack(pair)) > width) {
+      chunks.push(pair.slice(0, 1), pair.slice(1, 2));
+    } else {
+      chunks.push(pair);
+    }
+  }
+  // Pass 2: every line fits the budget — a label that still overflows
+  // truncates at the last word boundary (never mid-word, the separator and
+  // the counts are fixed and short).
+  return chunks.map((chunk) => {
+    const line = pack(chunk);
+    if (lineLength(line) <= width) return line;
+    return line.map((seg) => {
+      const isLabel = seg !== kindSeparator && seg.tone === "value" && seg.text.startsWith(" ");
+      if (!isLabel) return seg;
+      const budget = Math.max(1, width - lineLength(line) + seg.text.length);
+      return { ...seg, text: truncateAtWord(seg.text, budget) };
+    });
+  });
+}
+
 /**
  * Expanded sidebar (v4, quota-style): segment lines, tone per segment. Line 0
- * is the clickable bold header. No blank lines: an inapplicable line is
- * omitted entirely (hot at 0, sweep without metadata, sync without mesh).
+ * is the clickable bold header carrying the store size (the mesh `Mesh: <id>`
+ * pattern, 0.26.0) — the dedicated size line is gone (the duplicate). No blank
+ * lines: an inapplicable line is omitted entirely (hot at 0, sweep without
+ * metadata, sync without mesh).
  */
 export function formatMemorySidebarExpanded(
   s: MemorySidebarSnapshot,
   now: number = Date.now(),
+  opts?: { width?: number },
 ): SidebarSegment[][] {
-  const lines: SidebarSegment[][] = [[{ text: "▼ Memory", tone: "entity" }]];
+  const width = opts?.width ?? 32;
+  const header: SidebarSegment[] = [{ text: "▼ Memory", tone: "entity" }];
+  if (s.store_bytes > 0) {
+    const [sizeNum, sizeUnit] = storeSizeParts(s.store_bytes);
+    header.push(
+      { text: ": ", tone: "value" },
+      { text: sizeNum, tone: "qualifier" },
+      { text: ` ${sizeUnit}`, tone: "value" },
+    );
+  }
+  const lines: SidebarSegment[][] = [header];
   if (s.hot > 0) {
     const line: SidebarSegment[] = [
       { text: "  ●  ", tone: "alert" },
@@ -154,7 +230,11 @@ export function formatMemorySidebarExpanded(
     ];
     if (s.last_sweep_ms !== null) {
       const age = formatAgeHuman(Math.max(0, now - s.last_sweep_ms));
-      line.push({ text: ` · sweep ${age} ago`, tone: "value" });
+      line.push(
+        { text: " · sweep ", tone: "value" },
+        { text: age, tone: "qualifier" },
+        { text: " ago", tone: "value" },
+      );
     }
     lines.push(line);
   }
@@ -167,30 +247,7 @@ export function formatMemorySidebarExpanded(
     { text: " trashed", tone: "value" },
   ]);
   const kinds = s.kinds.filter((row) => row.count > 0);
-  // Two kinds per line, packed desc by count. No truncation on this section:
-  // 2 kinds fit the panel width, and a hard cut made the labels unreadable
-  // ("300 fa · 1 les") — seen live. The renderer wraps pathological cases.
-  for (let i = 0; i < kinds.length; i += 2) {
-    const line: SidebarSegment[] = [{ text: "  ≡  ", tone: "qualifier" }];
-    kinds.slice(i, i + 2).forEach((row, j) => {
-      if (j > 0) {
-        line.push({ text: " · ", tone: "value" });
-      }
-      line.push(
-        { text: `${row.count}`, tone: "qualifier" },
-        { text: ` ${plural(row.kind, row.count)}`, tone: "value" },
-      );
-    });
-    lines.push(line);
-  }
-  if (s.store_bytes > 0) {
-    const [sizeNum, sizeUnit] = storeSizeParts(s.store_bytes);
-    lines.push([
-      { text: "  ⌗  ", tone: "qualifier" },
-      { text: sizeNum, tone: "qualifier" },
-      { text: ` ${sizeUnit}`, tone: "value" },
-    ]);
-  }
+  lines.push(...kindLines(kinds, width));
   if (s.mesh_installed) {
     lines.push([
       { text: "  ⇄  ", tone: "qualifier" },
@@ -235,6 +292,89 @@ export function formatMemorySidebarCollapsed(s: MemorySidebarSnapshot): SidebarS
     );
   }
   return [line];
+}
+
+/** The rich /memory status dialog (0.26.0): one labeled section per line, the
+ * same tone grammar as the sidebar (labels and separators in value, numbers in
+ * qualifier, nothing bold: the dialog header carries the bold title). No blank
+ * lines: an inapplicable line is omitted (sync without mesh, kinds at zero
+ * render as "(none)"). */
+export function formatMemoryStatusDialog(
+  s: MemorySidebarSnapshot,
+  now: number = Date.now(),
+): SidebarSegment[][] {
+  const line = (label: string, segs: SidebarSegment[]): SidebarSegment[] => [
+    { text: `${label} `, tone: "value" },
+    ...segs,
+  ];
+  const lines: SidebarSegment[][] = [];
+  const [sizeNum, sizeUnit] = storeSizeParts(s.store_bytes);
+  lines.push(
+    line("Store", [
+      { text: sizeNum, tone: "qualifier" },
+      { text: ` ${sizeUnit}`, tone: "value" },
+      { text: " · ", tone: "value" },
+      { text: `${s.scope}`, tone: "qualifier" },
+      { text: " records in scope", tone: "value" },
+    ]),
+  );
+  lines.push(
+    line("Live", [
+      { text: `${s.live}`, tone: "qualifier" },
+      { text: " live", tone: "value" },
+      { text: " · ", tone: "value" },
+      { text: `${s.trashed}`, tone: "qualifier" },
+      { text: " trashed", tone: "value" },
+    ]),
+  );
+  const heat: SidebarSegment[] = [
+    { text: `${s.hot}`, tone: "qualifier" },
+    { text: ` ${plural("hot", s.hot)}`, tone: "value" },
+    { text: " · ", tone: "value" },
+    { text: `${s.stale}`, tone: "qualifier" },
+    { text: ` stale ${plural("anchor", s.stale)}`, tone: "value" },
+  ];
+  lines.push(line("Heat", heat));
+  const sweepAge =
+    s.last_sweep_ms === null ? "never" : formatAgeHuman(Math.max(0, now - s.last_sweep_ms));
+  const sweepTail: SidebarSegment[] =
+    s.last_sweep_ms === null
+      ? []
+      : [
+          { text: " ago", tone: "value" },
+          { text: " · ", tone: "value" },
+          { text: `${s.cooled}`, tone: "qualifier" },
+          { text: " cooled", tone: "value" },
+        ];
+  lines.push(line("Sweep", [{ text: sweepAge, tone: "qualifier" }, ...sweepTail]));
+  if (s.mesh_installed) {
+    lines.push(
+      line("Sync", [
+        { text: "in ", tone: "value" },
+        { text: `${s.sync_incoming}`, tone: "qualifier" },
+        { text: " · out ", tone: "value" },
+        { text: `${s.shareable}`, tone: "qualifier" },
+        { text: " shareable", tone: "value" },
+      ]),
+    );
+  }
+  const kinds = s.kinds.filter((row) => row.count > 0);
+  const kindSegs: SidebarSegment[] = [];
+  if (kinds.length === 0) {
+    kindSegs.push({ text: "(none)", tone: "value" });
+  } else {
+    kinds.forEach((row, i) => {
+      if (i > 0) {
+        kindSegs.push({ text: " · ", tone: "value" });
+      }
+      kindSegs.push(
+        { text: `${row.count}`, tone: "qualifier" },
+        { text: ` ${plural(row.kind, row.count)}`, tone: "value" },
+      );
+    });
+  }
+  lines.push(line("Kinds", kindSegs));
+  return lines;
 }
 
 export const MemoryRpc = Rpc.define({
@@ -333,6 +473,87 @@ export const MemoryRpc = Rpc.define({
           collapsed: { type: "boolean", description: "Sidebar collapsed state" },
         },
         required: ["collapsed"],
+        additionalProperties: false,
+      },
+    },
+    // The /memory stats view (0.26.0): scopes machine-wide, the most recently
+    // updated entries, the store totals.
+    stats: {
+      input: { type: "object", properties: {}, additionalProperties: false },
+      output: {
+        type: "object",
+        properties: {
+          total: { type: "number", description: "Live entries machine-wide" },
+          store_bytes: { type: "number", description: "Store file size on disk" },
+          scopes: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { scope: { type: "string" }, count: { type: "number" } },
+              required: ["scope", "count"],
+              additionalProperties: false,
+            },
+            description: "Live entries per scope, count descending",
+          },
+          top: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                kind: { type: "string" },
+                title: { type: "string" },
+              },
+              required: ["id", "kind", "title"],
+              additionalProperties: false,
+            },
+            description: "Most recently updated live entries, max 3",
+          },
+        },
+        required: ["total", "store_bytes", "scopes", "top"],
+        additionalProperties: false,
+      },
+    },
+    // The /memory continue bridge (0.26.0): the transform command is gone, the
+    // TUI dispatches here. Same behavior: export the transcript if needed and
+    // inject the retrieval pointer into the asking session.
+    continue: {
+      input: {
+        type: "object",
+        properties: {
+          sessionID: { type: "string", description: "The session the pointer lands in" },
+          target: { type: "string", description: "The session id to continue" },
+        },
+        required: ["sessionID", "target"],
+        additionalProperties: false,
+      },
+      output: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean", description: "Whether the pointer was injected" },
+          message: { type: "string", description: "Human report for the toast" },
+        },
+        required: ["ok", "message"],
+        additionalProperties: false,
+      },
+    },
+    // The /memory cleanup bridge (0.26.0): the retention sweep of exported
+    // transcripts, dry run unless apply.
+    cleanup: {
+      input: {
+        type: "object",
+        properties: {
+          sessionID: { type: "string", description: "Session to report into (prompt injection)" },
+          apply: { type: "boolean", description: "Delete the eligible files instead of reporting" },
+        },
+        additionalProperties: false,
+      },
+      output: {
+        type: "object",
+        properties: {
+          report: { type: "string", description: "The sweep report (human text)" },
+        },
+        required: ["report"],
         additionalProperties: false,
       },
     },

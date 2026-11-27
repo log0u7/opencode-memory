@@ -82,6 +82,7 @@ function fakeCtx(
 ) {
   const added: AddedTool[] = [];
   const commands: AddedCommand[] = [];
+  const rpcHandlers: Record<string, (input: unknown) => Promise<unknown>> = {};
   const sessionHooks = new Map<
     string,
     (event: { system: Array<{ type: string; text: string }>; messages: unknown[] }) => void
@@ -109,6 +110,9 @@ function fakeCtx(
       ),
       context: vi.fn(async () => (fixtures.context ? fixtures.context() : [])),
       prompt: vi.fn(async () => ({})),
+      // The 2.4 synthetic delivery (the continue bridge prefers it): a mock by
+      // default, deleted in the fallback test.
+      synthetic: vi.fn(async () => ({})),
       list: vi.fn(async () => ({ data: fixtures.sessions ?? [], cursor: {} })),
     },
     command: {
@@ -117,7 +121,13 @@ function fakeCtx(
     },
     generate: { text: vi.fn(fixtures.generateText ?? (async () => ({ text: "[]" }))) },
     rpc: {
-      register: async () => ({ dispose: async () => {}, events: { emit: async () => {} } }),
+      register: async (
+        _rpc: unknown,
+        handlers: Record<string, (input: unknown) => Promise<unknown>>,
+      ) => {
+        Object.assign(rpcHandlers, handlers);
+        return { dispose: async () => {}, events: { emit: async () => {} } };
+      },
     },
     event: {
       subscribe: vi.fn(
@@ -132,7 +142,7 @@ function fakeCtx(
     },
   } as unknown as Plugin.Context;
 
-  return { ctx, added, sessionHooks, commands };
+  return { ctx, added, sessionHooks, commands, rpcHandlers };
 }
 
 describe("v1 and v2 share one behaviour", () => {
@@ -700,10 +710,10 @@ describe("opencode-memory v2 setup", () => {
     await cleanup?.();
   });
 
-  it("memory-continue injects the pointer for a lazy-exported session", async () => {
+  it("the continue bridge injects the pointer through synthetic (resume: false)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "opencode-memory-cmd-"));
     dirs.push(dir);
-    const { ctx, commands } = fakeCtx(
+    const { ctx, rpcHandlers } = fakeCtx(
       join(dir, "memory.db"),
       { retrieval: { dir: join(dir, "transcripts") } },
       {
@@ -712,64 +722,157 @@ describe("opencode-memory v2 setup", () => {
       },
     );
     const cleanup = await pluginModule.setup(ctx);
-    const command = commands.find((c) => c.name === "memory-continue");
-    expect(command).toBeDefined();
 
-    await command?.execute({
+    const out = (await rpcHandlers.continue?.({
       sessionID: "ses_cur",
-      prompt: { text: "ses_old" },
-      delivery: "queue",
-    });
-    const call = (ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
-      | { sessionID: string; text: string; delivery: string }
+      target: "ses_old",
+    })) as { ok: boolean };
+    expect(out?.ok).toBe(true);
+    // The 2.4 synthetic path: the pointer attaches to the next run WITHOUT
+    // starting a turn, and no user message is posed.
+    const call = (ctx.session.synthetic as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+      | { sessionID: string; text: string; resume: boolean; description: string }
       | undefined;
     expect(call?.sessionID).toBe("ses_cur");
-    expect(call?.delivery).toBe("queue");
+    expect(call?.resume).toBe(false);
+    expect(call?.description).toBe("memory: continue ses_old");
     expect(call?.text).toContain("ses_old.md");
     expect(call?.text).toContain("continued request");
     expect(call?.text).toContain("Never guess: retrieve.");
+    expect((ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
     await cleanup?.();
   });
 
-  it("memory-continue explains a missing session id argument", async () => {
+  it("the continue bridge falls back to prompt when the host has no synthetic", async () => {
     const dir = mkdtempSync(join(tmpdir(), "opencode-memory-cmd-"));
     dirs.push(dir);
-    const { ctx, commands } = fakeCtx(join(dir, "memory.db"), {
-      retrieval: { dir: join(dir, "transcripts") },
-    });
+    const { ctx, rpcHandlers } = fakeCtx(
+      join(dir, "memory.db"),
+      { retrieval: { dir: join(dir, "transcripts") } },
+      {
+        sessionGet: () => ({ location: { directory: "/home/u/other" } }),
+        context: () => [{ type: "user", text: "continued request" }],
+      },
+    );
     const cleanup = await pluginModule.setup(ctx);
-    const command = commands.find((c) => c.name === "memory-continue");
-    await command?.execute({
-      sessionID: "ses_cur",
-      prompt: { text: "" },
-      delivery: "steer",
-    });
+    (ctx.session as { synthetic?: unknown }).synthetic = undefined;
+
+    await rpcHandlers.continue?.({ sessionID: "ses_cur", target: "ses_old" });
     const call = (ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
-      | { text: string }
+      | { sessionID: string; text: string }
       | undefined;
-    expect(call?.text).toContain("session id");
-    expect(call?.text).not.toContain("could not be exported");
+    expect(call?.sessionID).toBe("ses_cur");
+    expect(call?.text).toContain("ses_old.md");
     await cleanup?.();
   });
 
-  it("memory-continue explains an unexportable target", async () => {
+  it("the continue bridge answers a usage report on an empty target", async () => {
     const dir = mkdtempSync(join(tmpdir(), "opencode-memory-cmd-"));
     dirs.push(dir);
-    const { ctx, commands } = fakeCtx(join(dir, "memory.db"), {
+    const { ctx, rpcHandlers } = fakeCtx(join(dir, "memory.db"), {
       retrieval: { dir: join(dir, "transcripts") },
     });
     const cleanup = await pluginModule.setup(ctx);
-    const command = commands.find((c) => c.name === "memory-continue");
-    await command?.execute({
+    const out = (await rpcHandlers.continue?.({
       sessionID: "ses_cur",
-      prompt: { text: "ses_ghost" },
-      delivery: "steer",
+      target: "",
+    })) as { ok: boolean; message: string };
+    expect(out?.ok).toBe(false);
+    expect(out?.message).toContain("usage");
+    expect((ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    await cleanup?.();
+  });
+
+  it("the continue bridge reports retrieval disabled without prompting", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-cmd-"));
+    dirs.push(dir);
+    const { ctx, rpcHandlers } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { enabled: false },
     });
-    const call = (ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
-      | { text: string }
-      | undefined;
-    expect(call?.text).toContain("ses_ghost");
-    expect(call?.text).toContain("could not be exported");
+    const cleanup = await pluginModule.setup(ctx);
+    const out = (await rpcHandlers.continue?.({
+      sessionID: "ses_cur",
+      target: "ses_old",
+    })) as { ok: boolean; message: string };
+    expect(out?.ok).toBe(false);
+    expect(out?.message).toContain("retrieval is disabled");
+    expect((ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    await cleanup?.();
+  });
+
+  it("the cleanup bridge sweeps without a sessionID: report only, nothing protected", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-rt-"));
+    dirs.push(dir);
+    const tdir = join(dir, "transcripts");
+    const { ctx, rpcHandlers } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: tdir, retentionDays: 1, keepRecent: 1 },
+    });
+    mkdirSync(join(tdir, encodeURIComponent("/home/u/project")), { recursive: true });
+    const p = join(tdir, encodeURIComponent("/home/u/project"), "ses_old.md");
+    writeTranscriptFile(p, "# t");
+    // A second, newer file: the safety floor (keepRecent >= 1) protects the
+    // newest transcript, so the sweep needs one to spare.
+    const p2 = join(tdir, encodeURIComponent("/home/u/project"), "ses_new.md");
+    writeTranscriptFile(p2, "# t");
+    const { utimesSync, existsSync } = await import("node:fs");
+    utimesSync(p, (Date.now() - 60 * 86400000) / 1000, (Date.now() - 60 * 86400000) / 1000);
+    const cleanup = await pluginModule.setup(ctx);
+    const out = (await rpcHandlers.cleanup?.({ apply: true })) as { report: string };
+    expect(out?.report).toContain("applied");
+    expect(existsSync(p)).toBe(false);
+    expect((ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    await cleanup?.();
+  });
+
+  it("the stats handler zeroes when disposed and assembles scopes and top from real rows", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-stats-"));
+    dirs.push(dir);
+    const { ctx, rpcHandlers } = fakeCtx(join(dir, "memory.db"));
+    const cleanup = await pluginModule.setup(ctx);
+    const db = openMemoryDb(join(dir, "memory.db"));
+    db.conn.run(
+      `INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at,
+         source, deleted_at, paths, commit_sha, supersedes, status, superseded_at, heat, endorsed_by)
+       VALUES ('id-1', '/w', 'lesson', 'L', 'b', '[]', 1, 10, NULL, NULL, NULL, NULL, NULL, NULL, 'current', NULL, 0, '[]')`,
+    );
+    db.conn.run(
+      `INSERT INTO entries (id, scope, kind, title, body, tags, created_at, updated_at, expires_at,
+         source, deleted_at, paths, commit_sha, supersedes, status, superseded_at, heat, endorsed_by)
+       VALUES ('id-2', '/other', 'fact', 'F', 'b', '[]', 2, 20, NULL, NULL, NULL, NULL, NULL, NULL, 'current', NULL, 0, '[]')`,
+    );
+    db.close();
+    const out = (await rpcHandlers.stats?.({})) as {
+      total: number;
+      store_bytes: number;
+      scopes: Array<{ scope: string; count: number }>;
+      top: Array<{ id: string; kind: string }>;
+    };
+    expect(out?.total).toBe(2);
+    expect(out?.scopes).toEqual([
+      { scope: "/other", count: 1 },
+      { scope: "/w", count: 1 },
+    ]);
+    expect(out?.top[0]?.id).toBe("id-2");
+    await cleanup?.();
+  });
+
+  it("the continue bridge explains an unexportable target", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-cmd-"));
+    dirs.push(dir);
+    const { ctx, rpcHandlers } = fakeCtx(join(dir, "memory.db"), {
+      retrieval: { dir: join(dir, "transcripts") },
+    });
+    const cleanup = await pluginModule.setup(ctx);
+    const out = (await rpcHandlers.continue?.({
+      sessionID: "ses_cur",
+      target: "ses_ghost",
+    })) as { ok: boolean; message: string };
+    expect(out?.ok).toBe(false);
+    expect(out?.message).toContain("ses_ghost");
+    expect(out?.message).toContain("could not be exported");
+    // The failure rides the toast: no prompt, no LLM turn for an error the
+    // operator already sees.
+    expect((ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
     await cleanup?.();
   });
 
@@ -1104,11 +1207,11 @@ describe("transcript retention tools", () => {
     await cleanup?.();
   });
 
-  it("/memory-cleanup command runs dry run by default", async () => {
+  it("the cleanup bridge runs dry run by default", async () => {
     const dir = mkdtempSync(join(tmpdir(), "opencode-memory-rt-"));
     dirs.push(dir);
     const tdir = join(dir, "transcripts");
-    const { ctx, commands } = fakeCtx(join(dir, "memory.db"), {
+    const { ctx, rpcHandlers } = fakeCtx(join(dir, "memory.db"), {
       retrieval: { dir: tdir, retentionDays: 1, keepRecent: 1 },
     });
     mkdirSync(join(tdir, encodeURIComponent("/home/u/project")), { recursive: true });
@@ -1119,21 +1222,19 @@ describe("transcript retention tools", () => {
     const p2 = join(tdir, encodeURIComponent("/home/u/project"), "ses_new.md");
     writeTranscriptFile(p2, "# t");
     const cleanup = await pluginModule.setup(ctx);
-    const cmd = commands.find((c) => c.name === "memory-cleanup");
-    expect(cmd).toBeDefined();
-    await cmd?.execute({ sessionID: "ses_cur", prompt: { text: "" }, delivery: "steer" });
-    const call = (ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
-      | { text: string }
-      | undefined;
-    expect(call?.text).toContain("dry run");
+    const out = (await rpcHandlers.cleanup?.({ sessionID: "ses_cur" })) as { report: string };
+    expect(out?.report).toContain("dry run");
+    // The dialog shows the report: no prompt, no LLM turn for a text already
+    // on screen.
+    expect((ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
     await cleanup?.();
   });
 
-  it("/memory-cleanup command applies when asked", async () => {
+  it("the cleanup bridge applies when asked", async () => {
     const dir = mkdtempSync(join(tmpdir(), "opencode-memory-rt-"));
     dirs.push(dir);
     const tdir = join(dir, "transcripts");
-    const { ctx, commands } = fakeCtx(join(dir, "memory.db"), {
+    const { ctx, rpcHandlers } = fakeCtx(join(dir, "memory.db"), {
       retrieval: { dir: tdir, retentionDays: 1, keepRecent: 1 },
     });
     mkdirSync(join(tdir, encodeURIComponent("/home/u/project")), { recursive: true });
@@ -1144,12 +1245,11 @@ describe("transcript retention tools", () => {
     const p2 = join(tdir, encodeURIComponent("/home/u/project"), "ses_new.md");
     writeTranscriptFile(p2, "# t");
     const cleanup = await pluginModule.setup(ctx);
-    const cmd = commands.find((c) => c.name === "memory-cleanup");
-    await cmd?.execute({ sessionID: "ses_cur", prompt: { text: "apply" }, delivery: "steer" });
-    const call = (ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
-      | { text: string }
-      | undefined;
-    expect(call?.text).toContain("applied");
+    const out = (await rpcHandlers.cleanup?.({
+      sessionID: "ses_cur",
+      apply: true,
+    })) as { report: string };
+    expect(out?.report).toContain("applied");
     expect(existsSync(p)).toBe(false);
     await cleanup?.();
   });
