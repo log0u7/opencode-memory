@@ -136,7 +136,9 @@ export type SidebarSegment = { text: string; tone: SidebarTone };
  * budget has no boundary to cut at: hard cut. */
 function truncateAtWord(text: string, budget: number): string {
   if (text.length <= budget) return text;
-  const cut = text.slice(0, budget);
+  // The ellipsis rides INSIDE the budget: a hard cut at the full budget would
+  // render budget+1 chars and clip the marker itself.
+  const cut = text.slice(0, Math.max(1, budget - 1));
   const space = cut.lastIndexOf(" ");
   return (space > 0 ? cut.slice(0, space) : cut) + "…";
 }
@@ -370,7 +372,7 @@ export function formatMemoryStatusDialog(
       );
     });
   }
-  lines.push(line("Kinds", kindSegs.length > 0 ? kindSegs : [{ text: "(none)", tone: "value" }]));
+  lines.push(line("Kinds", kindSegs));
   return lines;
 }
 

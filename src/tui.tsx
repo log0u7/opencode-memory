@@ -2,7 +2,7 @@
 
 import { Plugin } from "@opencode/plugin/tui";
 import type { JSX } from "@opentui/solid";
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createSignal, untrack } from "solid-js";
 
 type Context = Plugin.Context;
 type Theme = Context["theme"];
@@ -215,8 +215,10 @@ export default Plugin.define({
     const unregisterSidebar = context.ui.slot({
       append: "sidebar.content",
       render: (slot) => {
-        if (slot.sessionID && slot.sessionID !== currentSession()) {
-          setCurrentSession(slot.sessionID);
+        // Written untracked: the write must not re-run the render that reads
+        // the same signal (Solid reactive loop).
+        if (slot.sessionID && slot.sessionID !== untrack(currentSession)) {
+          untrack(() => setCurrentSession(slot.sessionID));
         }
         const snap = snapshot();
         if (!snap) {

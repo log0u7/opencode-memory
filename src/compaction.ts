@@ -67,7 +67,7 @@ export function writeTranscriptFile(path: string, content: string): void {
 
 /** The last user request as recorded in an exported transcript file: the first non-empty
  * line after the final "## user" heading, collapsed to one line. Used to anchor pointers
- * (compaction result, /memory-continue) without keeping messages in memory. */
+ * (compaction result, /memory continue) without keeping messages in memory. */
 export function transcriptExcerpt(path: string, max: number = 200): string {
   const lines = readFileSync(path, "utf8").split("\n");
   let heading = -1;

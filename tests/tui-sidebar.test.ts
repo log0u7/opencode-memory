@@ -406,6 +406,29 @@ describe("formatMemorySidebarExpanded (v4)", () => {
     expect(renderLine(lines[3]).length).toBeLessThanOrEqual(32);
   });
 
+  it("keeps a single huge word inside the budget: the ellipsis never clips (0.26.0 review)", () => {
+    const snap = {
+      ...base,
+      live: 1,
+      trashed: 0,
+      hot: 0,
+      kinds: [{ kind: "g".repeat(40), count: 3 }], // no space: hard cut
+    };
+    const lines = formatMemorySidebarExpanded(snap, NOW, { width: 32 });
+    const rendered = renderLine(lines[2]);
+    expect(rendered.length).toBeLessThanOrEqual(32);
+    expect(rendered).toMatch(/…$/);
+  });
+
+  it("leaves a kind line exactly at the budget whole", () => {
+    // mark 5 + count 1 + space 1 + pluralized label 25 = 32 exactly: no split,
+    // no truncation, no ellipsis.
+    const kind = "k".repeat(24);
+    const snap = { ...base, live: 1, trashed: 0, hot: 0, kinds: [{ kind, count: 3 }] };
+    const lines = formatMemorySidebarExpanded(snap, NOW, { width: 32 });
+    expect(renderLine(lines[2])).toBe(`  ≡  3 ${kind}s`);
+  });
+
   it("formats human sweep ages across unit boundaries", () => {
     expect(formatAgeHuman(59_000)).toBe("59s");
     expect(formatAgeHuman(60_000)).toBe("1m");

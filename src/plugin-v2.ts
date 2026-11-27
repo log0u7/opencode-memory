@@ -973,6 +973,9 @@ export const MemoryV2 = Plugin.define({
       },
       continue: async (input: unknown) => {
         const { sessionID, target } = (input ?? {}) as { sessionID?: string; target?: string };
+        if (disposed) {
+          return { ok: false, message: "the memory plugin is disposed: restart the session" };
+        }
         if (!retrieval.enabled) {
           return { ok: false, message: "retrieval is disabled: no transcript to continue" };
         }

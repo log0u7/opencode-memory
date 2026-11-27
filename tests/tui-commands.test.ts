@@ -58,7 +58,7 @@ describe("scopeBreakdown and topEntries", () => {
     const rows = topEntries(db, { limit: 1, now: NOW });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ kind: "lesson", title: "new" });
-    expect(rows[0].id).toBeTruthy();
+    expect(rows[0]?.id).toBeTruthy();
   });
 });
 
