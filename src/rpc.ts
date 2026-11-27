@@ -137,8 +137,9 @@ export type SidebarSegment = { text: string; tone: SidebarTone };
 function truncateAtWord(text: string, budget: number): string {
   if (text.length <= budget) return text;
   // The ellipsis rides INSIDE the budget: a hard cut at the full budget would
-  // render budget+1 chars and clip the marker itself.
-  const cut = text.slice(0, Math.max(1, budget - 1));
+  // render budget+1 chars and clip the marker itself. A single word longer
+  // than the budget has no boundary to cut at: hard cut (mid-word, marked).
+  const cut = text.slice(0, Math.max(0, budget - 1));
   const space = cut.lastIndexOf(" ");
   return (space > 0 ? cut.slice(0, space) : cut) + "…";
 }

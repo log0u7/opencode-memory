@@ -420,6 +420,23 @@ describe("formatMemorySidebarExpanded (v4)", () => {
     expect(rendered).toMatch(/…$/);
   });
 
+  it("never renders more than the budget at any width above the mark floor (0.26.0 audit)", () => {
+    const snap = {
+      ...base,
+      live: 1,
+      trashed: 0,
+      hot: 0,
+      kinds: [{ kind: "orchestrator steering rules", count: 3 }],
+    };
+    // Below the fixed-grammar floor (mark 5 + count 1 + space 1 = 7), the
+    // mark itself overflows: inherent, the grammar does not shrink.
+    for (const width of [7, 8, 12, 32]) {
+      const lines = formatMemorySidebarExpanded(snap, NOW, { width });
+      const rendered = renderLine(lines[2]);
+      expect(rendered.length).toBeLessThanOrEqual(width);
+    }
+  });
+
   it("leaves a kind line exactly at the budget whole", () => {
     // mark 5 + count 1 + space 1 + pluralized label 25 = 32 exactly: no split,
     // no truncation, no ellipsis.

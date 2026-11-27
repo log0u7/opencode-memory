@@ -26,12 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`sweep 4m ago` was all muted).
 - The kind lines fit the panel width budget: a packed pair that overflows
   drops to one kind per line, a label that still overflows truncates at the
-  last word boundary (never mid-word).
+  last word boundary (a single word longer than the budget hard-cuts, the
+  ellipsis marking it).
 - The status dialog header reads `Memory · shared working memory` (no em dash
   in the UI strings).
-- `docs/conventions.md`: the convention blocks (todo discipline, session
-  protocol, mesh communication, release ritual, UI grammar) ready to paste
-  into an `AGENTS.md`, linked from the README.
+- The convention blocks live in the MESH repo's docs/conventions.md (the
+  single source, the 0.26.0 audit's call): the memory README links there and
+  says to paste only the blocks a host needs (the file is re-read at every
+  request of every agent).
 
 ### Removed
 

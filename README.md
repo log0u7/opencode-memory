@@ -269,7 +269,7 @@ The plugin renders a `Memory` panel in OpenCode's sidebar. Click the title to co
 | `● N hot` | Hot lessons (`heat >= 2`): recidivism, injected in priority. Line omitted at 0. |
 | `sweep N ago` | Age of the last housekeeping pass; the age reads in the qualifier tone like the other counts. Shown on the hot line, hidden with it. |
 | `▤ N live · N trashed` | The store: current entries vs tombstoned ones (recoverable for 30 days). |
-| `≡ N facts · N lessons` | Breakdown by kind, two per line, biggest first. The lines fit the panel width: a packed pair that overflows drops to one kind per line, and a label that still overflows truncates at the last word boundary (never mid-word). |
+| `≡ N facts · N lessons` | Breakdown by kind, two per line, biggest first. The lines fit the panel width: a packed pair that overflows drops to one kind per line, and a label that still overflows truncates at the last word boundary (a single word longer than the budget hard-cuts, the ellipsis marking it). |
 | `⇄ sync in N · out N` | Cross-host sync: `in` = inbox files to import, `out` = shareables to push to peers. Line omitted without opencode-mesh. |
 
 Collapsed, the panel reduces to one quota-style line (the hot count disappears at 0):
@@ -306,7 +306,7 @@ pnpm verify      # biome + typecheck + vitest
 pnpm build:check # tsc build + pack dry-run
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, and [docs/conventions.md](docs/conventions.md) for the convention blocks (todo discipline, session protocol, release ritual) ready to paste into an `AGENTS.md`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow. The [convention blocks](https://github.com/log0u7/opencode-mesh/blob/main/docs/conventions.md) live in the mesh repo (the single source, it documents the shared todo/session/release/comms discipline): paste ONLY the blocks a host needs into its `AGENTS.md` - the file is re-read at every request of every agent, unused blocks cost tokens.
 
 ## License
 

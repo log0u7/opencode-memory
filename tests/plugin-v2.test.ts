@@ -110,6 +110,9 @@ function fakeCtx(
       ),
       context: vi.fn(async () => (fixtures.context ? fixtures.context() : [])),
       prompt: vi.fn(async () => ({})),
+      // The 2.4 synthetic delivery (the continue bridge prefers it): a mock by
+      // default, deleted in the fallback test.
+      synthetic: vi.fn(async () => ({})),
       list: vi.fn(async () => ({ data: fixtures.sessions ?? [], cursor: {} })),
     },
     command: {
@@ -707,7 +710,7 @@ describe("opencode-memory v2 setup", () => {
     await cleanup?.();
   });
 
-  it("the continue bridge injects the pointer for a lazily exported session", async () => {
+  it("the continue bridge injects the pointer through synthetic (resume: false)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "opencode-memory-cmd-"));
     dirs.push(dir);
     const { ctx, rpcHandlers } = fakeCtx(
@@ -725,13 +728,40 @@ describe("opencode-memory v2 setup", () => {
       target: "ses_old",
     })) as { ok: boolean };
     expect(out?.ok).toBe(true);
+    // The 2.4 synthetic path: the pointer attaches to the next run WITHOUT
+    // starting a turn, and no user message is posed.
+    const call = (ctx.session.synthetic as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+      | { sessionID: string; text: string; resume: boolean }
+      | undefined;
+    expect(call?.sessionID).toBe("ses_cur");
+    expect(call?.resume).toBe(false);
+    expect(call?.text).toContain("ses_old.md");
+    expect(call?.text).toContain("continued request");
+    expect(call?.text).toContain("Never guess: retrieve.");
+    expect((ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    await cleanup?.();
+  });
+
+  it("the continue bridge falls back to prompt when the host has no synthetic", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-memory-cmd-"));
+    dirs.push(dir);
+    const { ctx, rpcHandlers } = fakeCtx(
+      join(dir, "memory.db"),
+      { retrieval: { dir: join(dir, "transcripts") } },
+      {
+        sessionGet: () => ({ location: { directory: "/home/u/other" } }),
+        context: () => [{ type: "user", text: "continued request" }],
+      },
+    );
+    const cleanup = await pluginModule.setup(ctx);
+    (ctx.session as { synthetic?: unknown }).synthetic = undefined;
+
+    await rpcHandlers.continue?.({ sessionID: "ses_cur", target: "ses_old" });
     const call = (ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
       | { sessionID: string; text: string }
       | undefined;
     expect(call?.sessionID).toBe("ses_cur");
     expect(call?.text).toContain("ses_old.md");
-    expect(call?.text).toContain("continued request");
-    expect(call?.text).toContain("Never guess: retrieve.");
     await cleanup?.();
   });
 
@@ -839,6 +869,9 @@ describe("opencode-memory v2 setup", () => {
     expect(out?.ok).toBe(false);
     expect(out?.message).toContain("ses_ghost");
     expect(out?.message).toContain("could not be exported");
+    // The failure rides the toast: no prompt, no LLM turn for an error the
+    // operator already sees.
+    expect((ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
     await cleanup?.();
   });
 
@@ -1190,10 +1223,9 @@ describe("transcript retention tools", () => {
     const cleanup = await pluginModule.setup(ctx);
     const out = (await rpcHandlers.cleanup?.({ sessionID: "ses_cur" })) as { report: string };
     expect(out?.report).toContain("dry run");
-    const call = (ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
-      | { text: string }
-      | undefined;
-    expect(call?.text).toContain("dry run");
+    // The dialog shows the report: no prompt, no LLM turn for a text already
+    // on screen.
+    expect((ctx.session.prompt as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
     await cleanup?.();
   });
 

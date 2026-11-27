@@ -983,15 +983,21 @@ export const MemoryV2 = Plugin.define({
           return { ok: false, message: "usage: /memory continue <sessionID>" };
         }
         const scope = await ensureTranscript(target);
-        let text: string;
         if (scope === null) {
-          text = unexportable(target);
-          await ctx.session.prompt({ sessionID, text });
-          return { ok: false, message: text };
+          // The failure rides the toast (the TUI shows it): no prompt, no LLM
+          // turn for an error the operator already sees.
+          return { ok: false, message: unexportable(target) };
         }
         const path = transcriptFilePath(retrieval.dir, scope, target);
-        text = compactionSummary(path, transcriptExcerpt(path));
-        await ctx.session.prompt({ sessionID, text });
+        const text = compactionSummary(path, transcriptExcerpt(path));
+        // The pointer attaches to the NEXT run without starting a turn and
+        // without posing as a user message (the 2.4 synthetic path); the plain
+        // prompt is the pre-2.4 fallback.
+        if (typeof ctx.session.synthetic === "function") {
+          await ctx.session.synthetic({ sessionID, text, resume: false });
+        } else {
+          await ctx.session.prompt({ sessionID, text });
+        }
         return { ok: true, message: `pointer injected from ${path}` };
       },
       cleanup: async (input: unknown) => {
@@ -1012,9 +1018,8 @@ export const MemoryV2 = Plugin.define({
         const report =
           `${dryRun ? "dry run (pass 'apply' to delete)" : "applied"}\n` +
           formatSweepResult(result, dryRun);
-        if (typeof sessionID === "string") {
-          await ctx.session.prompt({ sessionID, text: report });
-        }
+        // The dialog shows the report: no prompt injection, no LLM turn for a
+        // text the operator already has on screen.
         return { report };
       },
     });
